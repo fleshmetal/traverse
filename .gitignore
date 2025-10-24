@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+*.eggs/
+
+# Envs 
+.venv/
+.env
+.env.*
+
+# Build 
+dist/
+build/
+
+# Coverage
+.coverage
+htmlcov/
+
+# OS / Editor 
+.DS_Store 
+.vscode/
