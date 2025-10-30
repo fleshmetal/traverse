@@ -1,6 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-import pandas as pd 
+import pandas as pd
+
 
 class DataSource(ABC):
     """Abstract base class for data sources, yeilding normalized tables (plays, tracks, artists, genres)."""
@@ -8,4 +9,3 @@ class DataSource(ABC):
     @abstractmethod
     def load(self) -> dict[str, pd.DataFrame]:
         raise NotImplementedError
-        

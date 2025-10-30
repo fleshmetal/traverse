@@ -19,7 +19,7 @@ dependencies = [
 spotify = ["spotipy>=2.23"]
 cosmograph = ["pycosmograph>=0.3"]
 viz = ["matplotlib>=3.8"]
-dev = ["pytest","pytest-cov","ruff","mypy","pre-commit","ipykernel"]
+dev = ["pytest","pytest-cov","ruff","mypy","pre-commit","ipykernel", "pandas-stubs"]
 
 [project.scripts]
 traverse = "traverse.cli.main:app"
