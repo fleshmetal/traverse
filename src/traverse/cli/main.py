@@ -7,6 +7,7 @@ app = typer.Typer(
     add_completion=False,
 )
 
+
 @app.command()
 def version() -> None:
     """Print library version."""
@@ -15,6 +16,7 @@ def version() -> None:
     except Exception:
         v = "unknown"
     typer.echo(v)
+
 
 if __name__ == "__main__":
     app()
