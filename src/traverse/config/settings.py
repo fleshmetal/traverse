@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     DATA_ROOT: str = "./data"
     OUTPUT_ROOT: str = "./outputs"
@@ -12,5 +13,6 @@ class Settings(BaseSettings):
         env_file=".env",
         extra="ignore",  # ignore unexpected env vars
     )
+
 
 settings = Settings()

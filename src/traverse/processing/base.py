@@ -1,17 +1,25 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-import pandas as pd
+from typing import cast, List
+from traverse.core.types import TablesDict
+
 
 class Processor(ABC):
+    """Pure table -> table transform; must not mutate inputs in-place."""
+
     @abstractmethod
-    def run(self, tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    def run(self, tables: TablesDict) -> TablesDict:
         raise NotImplementedError
 
+
 class Pipeline:
-    def __init__(self, processors: list[Processor]):
+    """Compose processors sequentially."""
+
+    def __init__(self, processors: List[Processor]):
         self.processors = processors
 
-    def run(self, tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    def run(self, tables: TablesDict) -> TablesDict:
+        out: TablesDict = cast(TablesDict, dict(tables))
         for p in self.processors:
-            tables = p.run(tables)
-        return tables
+            out = p.run(out)
+        return out
