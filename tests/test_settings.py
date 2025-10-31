@@ -10,7 +10,7 @@ def test_env_override(monkeypatch, tmp_path):
     assert s.DATA_ROOT == str(tmp_path)
 
 
-def test_env_file_precendence(tmp_path, monkeypatch):
+def test_env_file_precedence(tmp_path):
     d = tmp_path / "proj"
     d.mkdir()
     (d / ".env").write_text("OUTPUT_ROOT=/from_env_file\n", encoding="utf-8")
