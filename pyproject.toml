@@ -22,7 +22,7 @@ viz = ["matplotlib>=3.8"]
 dev = ["pytest","pytest-cov","ruff","mypy","pre-commit","ipykernel", "pandas-stubs"]
 
 [project.scripts]
-traverse = "traverse.cli.main:app"
+tm = "traverse.cli.main:app"
 
 [tool.ruff]
 line-length = 100
