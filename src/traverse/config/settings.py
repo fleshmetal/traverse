@@ -8,10 +8,9 @@ class Settings(BaseSettings):
     SPOTIFY_CLIENT_SECRET: str | None = None
     SPOTIFY_REDIRECT_URI: str | None = None
 
-    # Pydantic v2 config replaces the old inner Config class
     model_config = SettingsConfigDict(
         env_file=".env",
-        extra="ignore",  # ignore unexpected env vars
+        extra="ignore",
     )
 
 
