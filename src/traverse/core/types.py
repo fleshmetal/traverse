@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import Literal, TypedDict
 import pandas as pd
 
-# Canonical table keys we expect everywhere
 TableKey = Literal["plays", "tracks", "artists", "genres"]
 
 
@@ -16,4 +15,3 @@ class TablesDict(TypedDict, total=False):
     tracks: pd.DataFrame
     artists: pd.DataFrame
     genres: pd.DataFrame
-    # allow additional optional tables later (total=False)
