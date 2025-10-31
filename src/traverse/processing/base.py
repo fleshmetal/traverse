@@ -9,7 +9,7 @@ class Processor(ABC):
 
     @abstractmethod
     def run(self, tables: TablesDict) -> TablesDict:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
 
 class Pipeline:

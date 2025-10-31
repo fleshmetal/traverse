@@ -1,17 +1,12 @@
 from __future__ import annotations
 import typer
 
-app = typer.Typer(help="Traverse CLI", no_args_is_help=True, add_completion=False)
+# Minimal CLI app with no subcommands for now.
+app = typer.Typer(
+    help="Traverse CLI",  # generic help (no version text)
+    no_args_is_help=True,
+    add_completion=False,
+)
 
-
-@app.command()
-def version() -> None:
-    try:
-        from traverse import __version__ as v
-    except Exception:
-        v = "unknown"
-    typer.echo(v)
-
-
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     app()
