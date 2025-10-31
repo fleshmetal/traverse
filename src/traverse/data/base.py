@@ -1,11 +1,11 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-import pandas as pd
+from traverse.core.types import TablesDict
 
 
 class DataSource(ABC):
-    """Abstract base class for data sources, yeilding normalized tables (plays, tracks, artists, genres)."""
+    """Reads raw inputs and yields canonical tables."""
 
     @abstractmethod
-    def load(self) -> dict[str, pd.DataFrame]:
+    def load(self) -> TablesDict:
         raise NotImplementedError
