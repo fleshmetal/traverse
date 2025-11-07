@@ -34,7 +34,7 @@ class RecordsData(DataSource):
         *,
         progress: bool = False,
         chunksize: Optional[int] = None,  # e.g., 100_000 for large files
-        engine: str = "auto",             # "auto" | "pyarrow" | "c" | "python"
+        engine: str = "auto",  # "auto" | "pyarrow" | "c" | "python"
     ) -> None:
         p = Path(path)
         if p.is_dir():
@@ -121,7 +121,9 @@ class RecordsData(DataSource):
             + df["release_year"].astype("Int64").astype("string").fillna("")
         )
 
-        df["track_id"] = base.map(lambda s: "h:" + hashlib.sha1(s.encode("utf-8")).hexdigest()).astype("string")
+        df["track_id"] = base.map(
+            lambda s: "h:" + hashlib.sha1(s.encode("utf-8")).hexdigest()
+        ).astype("string")
 
         # Tracks rows
         tracks_rows.extend(
@@ -158,7 +160,9 @@ class RecordsData(DataSource):
             if not g.empty:
                 g = g[g["genre"].notna() & (g["genre"].astype(str) != "")]
                 if not g.empty:
-                    genres_rows.extend(list(map(tuple, g[["track_id", "genre"]].astype("string").to_numpy())))
+                    genres_rows.extend(
+                        list(map(tuple, g[["track_id", "genre"]].astype("string").to_numpy()))
+                    )
 
         # STYLES (explode vectorized)
         if "styles_list" in df.columns:
@@ -170,7 +174,9 @@ class RecordsData(DataSource):
             if not s.empty:
                 s = s[s["style"].notna() & (s["style"].astype(str) != "")]
                 if not s.empty:
-                    styles_rows.extend(list(map(tuple, s[["track_id", "style"]].astype("string").to_numpy())))
+                    styles_rows.extend(
+                        list(map(tuple, s[["track_id", "style"]].astype("string").to_numpy()))
+                    )
 
     # ---------- public API ----------
 
@@ -205,28 +211,39 @@ class RecordsData(DataSource):
             if engine == "pyarrow":
                 df = pd.read_csv(self.path, dtype="string", engine="pyarrow", usecols=usecols)
             else:
-                df = pd.read_csv(self.path, dtype="string", on_bad_lines="skip", engine="c", usecols=usecols)
+                df = pd.read_csv(
+                    self.path, dtype="string", on_bad_lines="skip", engine="c", usecols=usecols
+                )
             self._process_chunk(df, tracks_rows, artists_set, genres_rows, styles_rows)
 
         # Build canonical tables
-        tracks = pd.DataFrame(tracks_rows).astype(
-            {
-                "track_id": "string",
-                "track_name": "string",
-                "album_id": "string",
-                "album_name": "string",
-                "artist_id": "string",
-                "isrc": "string",
-                "release_year": "Int64",
-            }
-        ).drop_duplicates(subset=["track_id"]).reset_index(drop=True)
+        tracks = (
+            pd.DataFrame(tracks_rows)
+            .astype(
+                {
+                    "track_id": "string",
+                    "track_name": "string",
+                    "album_id": "string",
+                    "album_name": "string",
+                    "artist_id": "string",
+                    "isrc": "string",
+                    "release_year": "Int64",
+                }
+            )
+            .drop_duplicates(subset=["track_id"])
+            .reset_index(drop=True)
+        )
 
         artists = pd.DataFrame({"artist_id": pd.Series(sorted(artists_set), dtype="string")})
         if not artists.empty:
             artists["artist_name"] = artists["artist_id"].str.replace(r"^art::", "", regex=True)
 
-        genres = pd.DataFrame(genres_rows, columns=["track_id", "genre"], dtype="string").drop_duplicates()
-        styles = pd.DataFrame(styles_rows, columns=["track_id", "style"], dtype="string").drop_duplicates()
+        genres = pd.DataFrame(
+            genres_rows, columns=["track_id", "genre"], dtype="string"
+        ).drop_duplicates()
+        styles = pd.DataFrame(
+            styles_rows, columns=["track_id", "style"], dtype="string"
+        ).drop_duplicates()
 
         plays = pd.DataFrame([])
 

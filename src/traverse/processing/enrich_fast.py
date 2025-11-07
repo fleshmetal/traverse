@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 # add to imports at top
 from typing import Dict, List, Optional, Set, Tuple, Literal, cast, Any
 from collections import defaultdict
@@ -14,13 +15,10 @@ from traverse.processing.base import Processor
 from traverse.utils.progress import Progress
 
 
-
-
 def _first_artist(artists: str | None) -> str:
     if artists is None:
         return ""
     return artists.split("|", 1)[0].strip()
-
 
 
 _SUFFIX_PAT = re.compile(
@@ -36,7 +34,9 @@ _SUFFIX_PAT = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-_BRACKETS_PAT = re.compile(r"\s*[\(\[\{].*?[\)\]\}]\s*")  # remove (feat …), (remix), [2020 remaster], etc.
+_BRACKETS_PAT = re.compile(
+    r"\s*[\(\[\{].*?[\)\]\}]\s*"
+)  # remove (feat …), (remix), [2020 remaster], etc.
 
 
 def _asciifold(s: str) -> str:
@@ -59,6 +59,7 @@ def _clean(s: str) -> str:
 def _norm(s: Any) -> str:
     # NA-safe, whitespace/punct/accents normalized
     import pandas as pd
+
     try:
         if pd.isna(s):
             return ""
@@ -100,7 +101,9 @@ class FastGenreStyleEnricher(Processor):
 
     @staticmethod
     @staticmethod
-    def _collect_needed_keys(tables: TablesDict) -> Tuple[pd.DataFrame, Set[str], Dict[str, Set[str]]]:
+    def _collect_needed_keys(
+        tables: TablesDict,
+    ) -> Tuple[pd.DataFrame, Set[str], Dict[str, Set[str]]]:
         """
         Returns:
         name_map: DataFrame ['track_id','artist_name','track_name','name_key','title_key']
@@ -144,12 +147,17 @@ class FastGenreStyleEnricher(Processor):
 
         if name_rows.empty:
             return (
-                pd.DataFrame(columns=["track_id", "artist_name", "track_name", "name_key", "title_key"], dtype="string"),
+                pd.DataFrame(
+                    columns=["track_id", "artist_name", "track_name", "name_key", "title_key"],
+                    dtype="string",
+                ),
                 set(),
                 {},
             )
 
-        name_rows["name_key"] = name_rows.apply(lambda r: _name_key(r["artist_name"], r["track_name"]), axis=1).astype("string")
+        name_rows["name_key"] = name_rows.apply(
+            lambda r: _name_key(r["artist_name"], r["track_name"]), axis=1
+        ).astype("string")
         name_rows["title_key"] = name_rows["track_name"].apply(_norm).astype("string")
 
         needed_keys = set(name_rows["name_key"].tolist())
@@ -159,7 +167,6 @@ class FastGenreStyleEnricher(Processor):
             title_to_keys[str(tk)].add(str(nk))
 
         return name_rows, needed_keys, dict(title_to_keys)
-
 
     # ---------- stream records.csv to build lookup ----------
 
@@ -209,7 +216,10 @@ class FastGenreStyleEnricher(Processor):
             # Split artists vectorized to a Series, then group back
             # (we only need to know if ANY artist makes a valid key)
             artists_series = (
-                hits["artists"].fillna("").astype("string").str.split("|", regex=False, expand=False)
+                hits["artists"]
+                .fillna("")
+                .astype("string")
+                .str.split("|", regex=False, expand=False)
             )
 
             # build rows -> list of normalized artist names
@@ -238,7 +248,9 @@ class FastGenreStyleEnricher(Processor):
             if "genres" in hits.columns:
                 g = (
                     hits[["__name_key", "genres"]]
-                    .assign(_g=hits["genres"].fillna("").astype("string").str.split("|", regex=False))
+                    .assign(
+                        _g=hits["genres"].fillna("").astype("string").str.split("|", regex=False)
+                    )
                     .explode("_g", ignore_index=True)
                 )
                 g = g[g["_g"].notna() & (g["_g"].astype("string").str.strip() != "")]
@@ -249,7 +261,9 @@ class FastGenreStyleEnricher(Processor):
             if "styles" in hits.columns:
                 s = (
                     hits[["__name_key", "styles"]]
-                    .assign(_s=hits["styles"].fillna("").astype("string").str.split("|", regex=False))
+                    .assign(
+                        _s=hits["styles"].fillna("").astype("string").str.split("|", regex=False)
+                    )
                     .explode("_s", ignore_index=True)
                 )
                 s = s[s["_s"].notna() & (s["_s"].astype("string").str.strip() != "")]
@@ -258,7 +272,6 @@ class FastGenreStyleEnricher(Processor):
                     bag.update([_clean(x) for x in s_df["_s"].astype(str)])
 
         return genres_by_nk, styles_by_nk
-
 
     # ---------- main run ----------
 
@@ -301,13 +314,14 @@ class FastGenreStyleEnricher(Processor):
             merged_genres = base_genres
         else:
             # ensure same column order & dtypes
-            base_genres = base_genres[["track_id", "genre"]].astype({"track_id": "string", "genre": "string"})
+            base_genres = base_genres[["track_id", "genre"]].astype(
+                {"track_id": "string", "genre": "string"}
+            )
             new_gen = new_gen.astype({"track_id": "string", "genre": "string"})
             merged_genres = pd.concat([base_genres, new_gen], ignore_index=True)
 
         out_dict["genres"] = (
-            merged_genres
-            .dropna(subset=["track_id", "genre"])
+            merged_genres.dropna(subset=["track_id", "genre"])
             .drop_duplicates()
             .reset_index(drop=True)
         )
@@ -323,23 +337,23 @@ class FastGenreStyleEnricher(Processor):
             elif new_sty.empty:
                 merged_styles = base_styles
             else:
-                base_styles = base_styles[["track_id", "style"]].astype({"track_id": "string", "style": "string"})
+                base_styles = base_styles[["track_id", "style"]].astype(
+                    {"track_id": "string", "style": "string"}
+                )
                 new_sty = new_sty.astype({"track_id": "string", "style": "string"})
                 merged_styles = pd.concat([base_styles, new_sty], ignore_index=True)
 
             out_dict["styles"] = (
-                merged_styles
-                .dropna(subset=["track_id", "style"])
+                merged_styles.dropna(subset=["track_id", "style"])
                 .drop_duplicates()
                 .reset_index(drop=True)
             )
 
-
         return cast(TablesDict, out_dict)
 
 
-
 # ---------- convenience: denormalized plays ----------
+
 
 def build_plays_with_tags(tables: TablesDict, *, explode: bool = False) -> pd.DataFrame:
     """
@@ -358,16 +372,32 @@ def build_plays_with_tags(tables: TablesDict, *, explode: bool = False) -> pd.Da
     g = g_obj if isinstance(g_obj, pd.DataFrame) else pd.DataFrame([])
     s = s_obj if isinstance(s_obj, pd.DataFrame) else pd.DataFrame([])
 
-    g = g[["track_id", "genre"]] if not g.empty and {"track_id", "genre"}.issubset(g.columns) else pd.DataFrame([])
-    s = s[["track_id", "style"]] if not s.empty and {"track_id", "style"}.issubset(s.columns) else pd.DataFrame([])
+    g = (
+        g[["track_id", "genre"]]
+        if not g.empty and {"track_id", "genre"}.issubset(g.columns)
+        else pd.DataFrame([])
+    )
+    s = (
+        s[["track_id", "style"]]
+        if not s.empty and {"track_id", "style"}.issubset(s.columns)
+        else pd.DataFrame([])
+    )
 
     # aggregate to distinct lists
     if not g.empty:
-        g_agg = g.groupby("track_id")["genre"].agg(lambda x: sorted(set(x.dropna().astype(str)))).reset_index()
+        g_agg = (
+            g.groupby("track_id")["genre"]
+            .agg(lambda x: sorted(set(x.dropna().astype(str))))
+            .reset_index()
+        )
     else:
         g_agg = pd.DataFrame({"track_id": [], "genre": []})
     if not s.empty:
-        s_agg = s.groupby("track_id")["style"].agg(lambda x: sorted(set(x.dropna().astype(str)))).reset_index()
+        s_agg = (
+            s.groupby("track_id")["style"]
+            .agg(lambda x: sorted(set(x.dropna().astype(str))))
+            .reset_index()
+        )
     else:
         s_agg = pd.DataFrame({"track_id": [], "style": []})
 
@@ -389,4 +419,3 @@ def build_plays_with_tags(tables: TablesDict, *, explode: bool = False) -> pd.Da
     out_g = out_g.explode("styles", ignore_index=True)
     out_g["styles"] = out_g["styles"].fillna("").astype("string")
     return out_g
-

@@ -13,6 +13,7 @@ from traverse.processing.base import Processor
 
 # ---------- small text helpers ----------
 
+
 def _norm_text(s: object | None) -> str:
     """Lowercase, NFKC-normalize, collapse whitespace, strip punctuation."""
     if s is None:
@@ -37,6 +38,7 @@ def _get_df(tables: TablesDict, key: str) -> pd.DataFrame:
 
 # ---------- enricher ----------
 
+
 class GenreStyleEnricher(Processor):
     """
     Enrich current tables (typically Spotify Extended output) with genres/styles from a
@@ -53,11 +55,13 @@ class GenreStyleEnricher(Processor):
     def __init__(self, records_tables: TablesDict) -> None:
         self._records = records_tables
 
-    def _build_records_maps(self) -> tuple[
-        Dict[str, Set[str]],                    # genres_by_trackid
-        Dict[str, Set[str]],                    # styles_by_trackid
-        Dict[str, Set[str]],                    # namekey_to_genres
-        Dict[str, Set[str]],                    # namekey_to_styles
+    def _build_records_maps(
+        self,
+    ) -> tuple[
+        Dict[str, Set[str]],  # genres_by_trackid
+        Dict[str, Set[str]],  # styles_by_trackid
+        Dict[str, Set[str]],  # namekey_to_genres
+        Dict[str, Set[str]],  # namekey_to_styles
     ]:
         r_tracks = _get_df(self._records, "tracks")
         r_artists = _get_df(self._records, "artists")
@@ -88,9 +92,15 @@ class GenreStyleEnricher(Processor):
             r_ta["artist_name"] = pd.Series([pd.NA] * len(r_ta), dtype="string")
 
         namekey_to_genres: Dict[str, Set[str]] = {}
-        if not r_ta.empty and not r_genres.empty and {"track_name", "artist_name"}.issubset(r_ta.columns):
+        if (
+            not r_ta.empty
+            and not r_genres.empty
+            and {"track_name", "artist_name"}.issubset(r_ta.columns)
+        ):
             base = r_ta[["track_id", "artist_name", "track_name"]].dropna()
-            base["name_key"] = base.apply(lambda r: _name_key(r["artist_name"], r["track_name"]), axis=1)
+            base["name_key"] = base.apply(
+                lambda r: _name_key(r["artist_name"], r["track_name"]), axis=1
+            )
             for nk, nk_df in base.groupby("name_key"):
                 gset_from_name: Set[str] = set()
                 for tid in nk_df["track_id"].astype(str).unique():
@@ -99,9 +109,15 @@ class GenreStyleEnricher(Processor):
                     namekey_to_genres[str(nk)] = gset_from_name
 
         namekey_to_styles: Dict[str, Set[str]] = {}
-        if not r_ta.empty and not r_styles.empty and {"track_name", "artist_name"}.issubset(r_ta.columns):
+        if (
+            not r_ta.empty
+            and not r_styles.empty
+            and {"track_name", "artist_name"}.issubset(r_ta.columns)
+        ):
             base2 = r_ta[["track_id", "artist_name", "track_name"]].dropna()
-            base2["name_key"] = base2.apply(lambda r: _name_key(r["artist_name"], r["track_name"]), axis=1)
+            base2["name_key"] = base2.apply(
+                lambda r: _name_key(r["artist_name"], r["track_name"]), axis=1
+            )
             for nk, nk_df in base2.groupby("name_key"):
                 sset_from_name: Set[str] = set()
                 for tid in nk_df["track_id"].astype(str).unique():
@@ -120,10 +136,7 @@ class GenreStyleEnricher(Processor):
                 out_dict[k] = df_k
 
         # Build lookup structures from Records
-        (genres_by_tid,
-         styles_by_tid,
-         nk_to_genres,
-         nk_to_styles) = self._build_records_maps()
+        (genres_by_tid, styles_by_tid, nk_to_genres, nk_to_styles) = self._build_records_maps()
 
         # Pull current universe
         cur_tracks = out_dict.get("tracks", pd.DataFrame([]))
@@ -133,17 +146,24 @@ class GenreStyleEnricher(Processor):
         # Build a mapping track_id -> name_key using plays (preferred) then tracks+artists
         names = pd.DataFrame(columns=["track_id", "artist_name", "track_name"], dtype="string")
 
-        if not cur_plays.empty and {"track_id", "artist_name", "track_name"}.issubset(cur_plays.columns):
+        if not cur_plays.empty and {"track_id", "artist_name", "track_name"}.issubset(
+            cur_plays.columns
+        ):
             names = cur_plays[["track_id", "artist_name", "track_name"]].dropna().drop_duplicates()
 
-        if (not cur_tracks.empty and {"track_id", "track_name", "artist_id"}.issubset(cur_tracks.columns)
-                and not cur_artists.empty):
+        if (
+            not cur_tracks.empty
+            and {"track_id", "track_name", "artist_id"}.issubset(cur_tracks.columns)
+            and not cur_artists.empty
+        ):
             tx = cur_tracks.merge(cur_artists, on="artist_id", how="left")
             tx = tx[["track_id", "artist_name", "track_name"]].dropna().drop_duplicates()
             names = pd.concat([names, tx], ignore_index=True).drop_duplicates()
 
         if not names.empty:
-            names["name_key"] = names.apply(lambda r: _name_key(r["artist_name"], r["track_name"]), axis=1)
+            names["name_key"] = names.apply(
+                lambda r: _name_key(r["artist_name"], r["track_name"]), axis=1
+            )
 
         # Current track ids
         cur_track_ids: Set[str] = set()
@@ -166,7 +186,9 @@ class GenreStyleEnricher(Processor):
         # 2) name-key fallback
         if not names.empty and "name_key" in names.columns:
             # choose one name_key per track_id
-            first_nk_map = names.dropna(subset=["name_key"]).groupby("track_id")["name_key"].first().to_dict()
+            first_nk_map = (
+                names.dropna(subset=["name_key"]).groupby("track_id")["name_key"].first().to_dict()
+            )
             for tid, nk in first_nk_map.items():
                 for g in nk_to_genres.get(cast(str, nk), set()):
                     gen_rows.append((str(tid), g))
@@ -176,19 +198,23 @@ class GenreStyleEnricher(Processor):
         # Build DataFrames and union with existing
         base_genres = out_dict.get("genres", pd.DataFrame(columns=["track_id", "genre"])).copy()
         new_gen = pd.DataFrame(gen_rows, columns=["track_id", "genre"], dtype="string")
-        genres_union = (pd.concat([base_genres, new_gen], ignore_index=True)
-                          .dropna(subset=["track_id", "genre"])
-                          .drop_duplicates()
-                          .reset_index(drop=True))
+        genres_union = (
+            pd.concat([base_genres, new_gen], ignore_index=True)
+            .dropna(subset=["track_id", "genre"])
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
         out_dict["genres"] = genres_union
 
         if sty_rows or ("styles" in out_dict):
             base_styles = out_dict.get("styles", pd.DataFrame(columns=["track_id", "style"])).copy()
             new_sty = pd.DataFrame(sty_rows, columns=["track_id", "style"], dtype="string")
-            styles_union = (pd.concat([base_styles, new_sty], ignore_index=True)
-                              .dropna(subset=["track_id", "style"])
-                              .drop_duplicates()
-                              .reset_index(drop=True))
+            styles_union = (
+                pd.concat([base_styles, new_sty], ignore_index=True)
+                .dropna(subset=["track_id", "style"])
+                .drop_duplicates()
+                .reset_index(drop=True)
+            )
             out_dict["styles"] = styles_union
 
         # Return as TablesDict
@@ -196,6 +222,7 @@ class GenreStyleEnricher(Processor):
 
 
 # ---------- convenience: denormalized plays ----------
+
 
 def build_plays_with_tags(tables: TablesDict, *, explode: bool = False) -> pd.DataFrame:
     """
@@ -215,16 +242,32 @@ def build_plays_with_tags(tables: TablesDict, *, explode: bool = False) -> pd.Da
     g = _get_df(tables, "genres")
     s = _get_df(tables, "styles")
 
-    g = g[["track_id", "genre"]] if not g.empty and {"track_id", "genre"}.issubset(g.columns) else pd.DataFrame([])
-    s = s[["track_id", "style"]] if not s.empty and {"track_id", "style"}.issubset(s.columns) else pd.DataFrame([])
+    g = (
+        g[["track_id", "genre"]]
+        if not g.empty and {"track_id", "genre"}.issubset(g.columns)
+        else pd.DataFrame([])
+    )
+    s = (
+        s[["track_id", "style"]]
+        if not s.empty and {"track_id", "style"}.issubset(s.columns)
+        else pd.DataFrame([])
+    )
 
     # aggregate to list per track_id
     if not g.empty:
-        g_agg = g.groupby("track_id")["genre"].agg(lambda x: sorted(set(x.dropna().astype(str)))).reset_index()
+        g_agg = (
+            g.groupby("track_id")["genre"]
+            .agg(lambda x: sorted(set(x.dropna().astype(str))))
+            .reset_index()
+        )
     else:
         g_agg = pd.DataFrame({"track_id": [], "genre": []})
     if not s.empty:
-        s_agg = s.groupby("track_id")["style"].agg(lambda x: sorted(set(x.dropna().astype(str)))).reset_index()
+        s_agg = (
+            s.groupby("track_id")["style"]
+            .agg(lambda x: sorted(set(x.dropna().astype(str))))
+            .reset_index()
+        )
     else:
         s_agg = pd.DataFrame({"track_id": [], "style": []})
 
