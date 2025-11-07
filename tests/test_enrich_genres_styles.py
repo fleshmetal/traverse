@@ -3,14 +3,20 @@ import pandas as pd
 
 from traverse.processing.enrich import GenreStyleEnricher, build_plays_with_tags
 
+
 # --- tiny helpers to build TablesDict-ish dicts ---
 def tdict(plays=None, tracks=None, artists=None, genres=None, styles=None):
     out = {}
-    if plays is not None:   out["plays"]   = plays
-    if tracks is not None:  out["tracks"]  = tracks
-    if artists is not None: out["artists"] = artists
-    if genres is not None:  out["genres"]  = genres
-    if styles is not None:  out["styles"]  = styles
+    if plays is not None:
+        out["plays"] = plays
+    if tracks is not None:
+        out["tracks"] = tracks
+    if artists is not None:
+        out["artists"] = artists
+    if genres is not None:
+        out["genres"] = genres
+    if styles is not None:
+        out["styles"] = styles
     return out
 
 
@@ -41,14 +47,18 @@ def test_enrich_exact_track_id_match():
     )
     artists = pd.DataFrame({"artist_id": ["art::Aphex Twin"], "artist_name": ["Aphex Twin"]})
 
-    ext = tdict(plays=plays, tracks=tracks, artists=artists,
-                genres=pd.DataFrame(columns=["track_id","genre"]))
+    ext = tdict(
+        plays=plays,
+        tracks=tracks,
+        artists=artists,
+        genres=pd.DataFrame(columns=["track_id", "genre"]),
+    )
 
     # Records snapshot has genres/styles keyed by the SAME track_id
-    r_tracks  = tracks.copy()
+    r_tracks = tracks.copy()
     r_artists = artists.copy()
-    r_genres  = pd.DataFrame({"track_id": ["trk:abc123"], "genre": ["Ambient Techno"]})
-    r_styles  = pd.DataFrame({"track_id": ["trk:abc123"], "style": ["IDM"]})
+    r_genres = pd.DataFrame({"track_id": ["trk:abc123"], "genre": ["Ambient Techno"]})
+    r_styles = pd.DataFrame({"track_id": ["trk:abc123"], "style": ["IDM"]})
 
     rec = tdict(tracks=r_tracks, artists=r_artists, genres=r_genres, styles=r_styles)
 
@@ -93,8 +103,12 @@ def test_enrich_name_key_fallback_when_no_track_id():
     )
     artists = pd.DataFrame({"artist_id": ["art::DJ Shadow"], "artist_name": ["DJ Shadow"]})
 
-    ext = tdict(plays=plays, tracks=tracks, artists=artists,
-                genres=pd.DataFrame(columns=["track_id","genre"]))
+    ext = tdict(
+        plays=plays,
+        tracks=tracks,
+        artists=artists,
+        genres=pd.DataFrame(columns=["track_id", "genre"]),
+    )
 
     # Records has a *different* track_id but the same artist/track names
     r_tracks = pd.DataFrame(
@@ -109,8 +123,8 @@ def test_enrich_name_key_fallback_when_no_track_id():
         }
     )
     r_artists = artists.copy()
-    r_genres  = pd.DataFrame({"track_id": ["trk:realshadowid"], "genre": ["Trip Hop"]})
-    r_styles  = pd.DataFrame({"track_id": ["trk:realshadowid"], "style": ["Downtempo"]})
+    r_genres = pd.DataFrame({"track_id": ["trk:realshadowid"], "genre": ["Trip Hop"]})
+    r_styles = pd.DataFrame({"track_id": ["trk:realshadowid"], "style": ["Downtempo"]})
 
     rec = tdict(tracks=r_tracks, artists=r_artists, genres=r_genres, styles=r_styles)
 
@@ -124,4 +138,6 @@ def test_enrich_name_key_fallback_when_no_track_id():
 
     # Exploded convenience table should contain the tags
     exploded = build_plays_with_tags(out, explode=True)
-    assert "Trip Hop" in set(exploded["genres"].tolist()) or "Downtempo" in set(exploded["styles"].tolist())
+    assert "Trip Hop" in set(exploded["genres"].tolist()) or "Downtempo" in set(
+        exploded["styles"].tolist()
+    )
