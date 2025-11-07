@@ -34,7 +34,14 @@ def main(
     t_ext = sx.load()
     plays_ext = t_ext["plays"]
     print(" files matched:", plays_ext.attrs.get("source_files_count"))
-    print(" plays:", len(plays_ext), "tracks:", len(t_ext["tracks"]), "artists:", len(t_ext["artists"]))
+    print(
+        " plays:",
+        len(plays_ext),
+        "tracks:",
+        len(t_ext["tracks"]),
+        "artists:",
+        len(t_ext["artists"]),
+    )
 
     print("\n=== Enrich (streaming semi-join) from Records CSV ===")
     enr = FastGenreStyleEnricher(
@@ -65,36 +72,44 @@ def main(
         key_cols = [c for c in ["played_at", "track_id"] if c in wide.columns]
         if key_cols:
             agg = {
-                "genres": lambda s: " | ".join([x for x in s.astype(str).tolist() if x and x != "nan" and x != ""]),
-                "styles": lambda s: " | ".join([x for x in s.astype(str).tolist() if x and x != "nan" and x != ""]),
+                "genres": lambda s: " | ".join(
+                    [x for x in s.astype(str).tolist() if x and x != "nan" and x != ""]
+                ),
+                "styles": lambda s: " | ".join(
+                    [x for x in s.astype(str).tolist() if x and x != "nan" and x != ""]
+                ),
             }
             for col in list(agg.keys()):
                 if col not in wide.columns:
                     agg.pop(col, None)
             if agg:
-                wide = (
-                    wide.groupby(key_cols, as_index=False)
-                        .agg(agg, engine="python")
-                )
+                wide = wide.groupby(key_cols, as_index=False).agg(agg, engine="python")
 
     # Ensure string columns with all tags joined
     for col in ("genres", "styles"):
         if col in wide.columns:
             wide[col] = wide[col].apply(_join_tags).astype("string")
-    
 
     total = len(wide)
     with_genre = int((wide["genres"].astype(str) != "[]").sum()) if "genres" in wide.columns else 0
     with_style = int((wide["styles"].astype(str) != "[]").sum()) if "styles" in wide.columns else 0
-    print(f" rows: {total} | rows with ≥1 genre: {with_genre} ({pct(with_genre, total)}) | "
-          f"rows with ≥1 style: {with_style} ({pct(with_style, total)})")
+    print(
+        f" rows: {total} | rows with ≥1 genre: {with_genre} ({pct(with_genre, total)}) | "
+        f"rows with ≥1 style: {with_style} ({pct(with_style, total)})"
+    )
 
-    cols = [c for c in ["played_at", "artist_name", "track_name", "genres", "styles"] if c in wide.columns]
+    cols = [
+        c
+        for c in ["played_at", "artist_name", "track_name", "genres", "styles"]
+        if c in wide.columns
+    ]
     print("\nSample rows:")
     print(wide.head(10)[cols])
 
     if out_path is not None:
-        fname = "plays_with_tags_fast_exploded.parquet" if explode else "plays_with_tags_fast.parquet"
+        fname = (
+            "plays_with_tags_fast_exploded.parquet" if explode else "plays_with_tags_fast.parquet"
+        )
         out_parquet = out_path / fname
         wide.to_parquet(out_parquet, index=False)
         print("\nSaved Parquet:", out_parquet)
@@ -111,26 +126,36 @@ def main(
             else:
                 for col in ("genres", "styles"):
                     if col in wide_csv.columns:
-                        wide_csv[col] = wide_csv[col].apply(
-                            lambda v: " | ".join(v) if isinstance(v, list) else (str(v) if pd.notna(v) else "")
-                        ).astype("string")
+                        wide_csv[col] = (
+                            wide_csv[col]
+                            .apply(
+                                lambda v: " | ".join(v)
+                                if isinstance(v, list)
+                                else (str(v) if pd.notna(v) else "")
+                            )
+                            .astype("string")
+                        )
 
             wide_csv.to_csv(out_csv, index=False)
             print("Saved CSV:", out_csv)
 
 
-
-
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Smoke test: fast streaming enrichment (Records → Extended)")
+    p = argparse.ArgumentParser(
+        description="Smoke test: fast streaming enrichment (Records → Extended)"
+    )
     p.add_argument("--extended-dir", required=True)
     p.add_argument("--records-csv", required=True)
     p.add_argument("--explode", action="store_true")
     p.add_argument("--progress", action="store_true")
     p.add_argument("--out-dir", default="./_out")
     p.add_argument("--write-csv", action="store_true")
-    p.add_argument("--records-chunksize", type=int, default=200_000,
-                   help="Chunk size for scanning Records (semi-join).")
+    p.add_argument(
+        "--records-chunksize",
+        type=int,
+        default=200_000,
+        help="Chunk size for scanning Records (semi-join).",
+    )
     args = p.parse_args()
 
     main(

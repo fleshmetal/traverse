@@ -66,7 +66,9 @@ class SpotifyExtendedExport(DataSource):
     Produces canonical tables; 'genres' is empty (to be enriched later).
     """
 
-    def __init__(self, export_dir: str | Path, *, recursive: bool = True, progress: bool = True) -> None:
+    def __init__(
+        self, export_dir: str | Path, *, recursive: bool = True, progress: bool = True
+    ) -> None:
         self.export_dir = Path(export_dir)
         self.recursive = bool(recursive)
         self._progress = Progress(enabled=progress)
