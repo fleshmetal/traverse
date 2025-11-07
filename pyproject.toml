@@ -13,13 +13,14 @@ dependencies = [
   "networkx>=3.0",
   "pyarrow>=14.0",
   "typer>=0.12",
+  "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]
 spotify = ["spotipy>=2.23"]
 cosmograph = ["pycosmograph>=0.3"]
 viz = ["matplotlib>=3.8"]
-dev = ["pytest","pytest-cov","ruff","mypy","pre-commit","ipykernel", "pandas-stubs"]
+dev = ["pytest","pytest-cov","ruff","mypy","pre-commit","ipykernel", "pandas-stubs", "types-tqdm"]
 
 [project.scripts]
 tm = "traverse.cli.main:app"
