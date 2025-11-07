@@ -1,61 +1,43 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple, cast
 
 import pandas as pd
 
 from traverse.core.types import TablesDict
 from traverse.data.base import DataSource
-
-
-def _norm(s: Optional[str]) -> str:
-    return (s or "").strip().lower()
+from traverse.utils.progress import Progress
 
 
 def _split_pipe(s: Optional[str]) -> List[str]:
-    """
-    Split 'a|b|c' → ['a','b','c'], trimming whitespace and dropping empties.
-    """
     if s is None:
         return []
     parts = [p.strip() for p in str(s).split("|")]
     return [p for p in parts if p]
 
 
-def _stable_track_id(
-    title: str, primary_artist: str, year: Optional[pd.Series] | Optional[int] | Optional[str]
-) -> str:
-    """
-    Produce a stable track_id from (primary artist, title, release_year).
-    Format: h:<sha1(normalized_artist::normalized_title::year)>
-    """
-    y = "" if year is None else str(year)
-    base = f"{_norm(primary_artist)}::{_norm(title)}::{y}"
-    digest = hashlib.sha1(base.encode("utf-8")).hexdigest()
-    return f"h:{digest}"
-
-
 class RecordsData(DataSource):
     """
-    Load canonical tables from a SINGLE CSV with columns:
-      - title, release_year, artists, genres, styles, region
+    Ingest a SINGLE CSV with columns like:
+      title, release_year, artists, [genres], [styles], [region]
     Multi-valued columns are '|' delimited.
 
-    Returns:
-      plays  : empty DataFrame
-      tracks : (track_id, track_name, album_id, album_name, artist_id, isrc, release_year)
-      artists: (artist_id, artist_name)
-      genres : (track_id, genre)
-      styles : (track_id, style)
+    Supports chunked reading with a tqdm progress bar.
     """
 
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        progress: bool = False,
+        chunksize: Optional[int] = None,  # e.g., 100_000 for large files
+        engine: str = "auto",  # "auto" | "pyarrow" | "c" | "python"
+    ) -> None:
         p = Path(path)
         if p.is_dir():
-            # If a directory is passed, look for a sensible default filename.
-            # Adjust the default here if your file has a different name.
             candidate = p / "records.csv"
             if not candidate.exists():
                 raise FileNotFoundError(
@@ -68,103 +50,210 @@ class RecordsData(DataSource):
                 raise ValueError(f"Expected a .csv file, got: {p}")
             self.path = p
 
-    def load(self) -> TablesDict:
-        # Read CSV as string columns, then coerce year to nullable Int64
-        df = pd.read_csv(self.path, dtype="string").fillna(pd.NA)
+        self._progress = Progress(enabled=progress)
+        self._chunksize = chunksize
+        self._engine = engine
 
-        # Normalize expected columns; raise early if required ones missing
-        required = {"title", "release_year", "artists"}
-        missing = required - set(df.columns)
-        if missing:
-            raise ValueError(f"Records CSV missing required columns: {sorted(missing)}")
+    # ---------- engine + header ----------
 
-        # Optional columns: genres, styles, region
+    def _pick_engine(self) -> str:
+        """
+        Choose CSV engine:
+        - If chunking is requested, force 'c' (pyarrow can't chunk).
+        - Else, prefer 'pyarrow' when available (fast), otherwise 'c'.
+        - Respect explicit engine choice if set to 'c' or 'python'.
+        """
+        if self._chunksize:
+            return "c"
+        if self._engine in {"c", "python"}:
+            return self._engine
+        if self._engine == "pyarrow":
+            return "pyarrow" if importlib.util.find_spec("pyarrow") else "c"
+        # auto
+        return "pyarrow" if importlib.util.find_spec("pyarrow") else "c"
+
+    def _read_header(self) -> List[str]:
+        # Lightweight header read (C engine is fine here)
+        hdr = pd.read_csv(self.path, nrows=0, engine="c")
+        return list(hdr.columns)
+
+    # ---------- chunk processor ----------
+
+    def _process_chunk(
+        self,
+        df: pd.DataFrame,
+        tracks_rows: List[Dict[str, object]],
+        artists_set: Set[str],
+        genres_rows: List[Tuple[str, str]],
+        styles_rows: List[Tuple[str, str]],
+    ) -> None:
+        # Ensure expected columns exist
+        for col in ("title", "release_year", "artists"):
+            if col not in df.columns:
+                df[col] = pd.NA
         if "genres" not in df.columns:
             df["genres"] = pd.NA
         if "styles" not in df.columns:
             df["styles"] = pd.NA
-        if "region" not in df.columns:
-            df["region"] = pd.NA
 
-        # Coerce release_year to nullable integer
+        # Coerce dtypes
+        df["title"] = df["title"].astype("string")
         df["release_year"] = pd.to_numeric(df["release_year"], errors="coerce").astype("Int64")
+        df["artists"] = df["artists"].astype("string")
+        df["genres"] = df["genres"].astype("string")
+        df["styles"] = df["styles"].astype("string")
 
         # Parse list-like columns
         df["artists_list"] = df["artists"].apply(_split_pipe)
         df["genres_list"] = df["genres"].apply(_split_pipe)
         df["styles_list"] = df["styles"].apply(_split_pipe)
 
-        # Primary artist = first in list (if any)
-        df["primary_artist"] = df["artists_list"].apply(lambda xs: xs[0] if xs else "")
+        # Primary artist (vectorized-ish)
+        pa = df["artists_list"].apply(lambda xs: xs[0] if xs else "").astype("string")
+        df["primary_artist"] = pa
 
-        # Build stable track_id
-        df["track_id"] = df.apply(
-            lambda r: _stable_track_id(
-                title=str(r.get("title", "")),
-                primary_artist=str(r.get("primary_artist", "")),
-                year=r.get("release_year"),
-            ),
-            axis=1,
+        # Stable track_id (vectorized base + sha1 map)
+        base = (
+            pa.str.strip().str.lower()
+            + "::"
+            + df["title"].fillna("").str.strip().str.lower()
+            + "::"
+            + df["release_year"].astype("Int64").astype("string").fillna("")
+        )
+
+        df["track_id"] = base.map(
+            lambda s: "h:" + hashlib.sha1(s.encode("utf-8")).hexdigest()
         ).astype("string")
 
-        # Canonical TRACKS
+        # Tracks rows
+        tracks_rows.extend(
+            dict(
+                track_id=tid,
+                track_name=title,
+                album_id=pd.NA,
+                album_name=pd.NA,
+                artist_id=f"art::{pa_val}" if pa_val else "art::",
+                isrc=pd.NA,
+                release_year=ry,
+            )
+            for tid, title, pa_val, ry in zip(
+                df["track_id"].tolist(),
+                df["title"].tolist(),
+                df["primary_artist"].tolist(),
+                df["release_year"].tolist(),
+            )
+        )
+
+        # Artists set (flatten)
+        for xs in df["artists_list"].tolist():
+            for a in xs:
+                if a:
+                    artists_set.add(f"art::{a}")
+
+        # GENRES (explode vectorized)
+        if "genres_list" in df.columns:
+            g = (
+                df[["track_id", "genres_list"]]
+                .explode("genres_list", ignore_index=True)
+                .rename(columns={"genres_list": "genre"})
+            )
+            if not g.empty:
+                g = g[g["genre"].notna() & (g["genre"].astype(str) != "")]
+                if not g.empty:
+                    genres_rows.extend(
+                        list(map(tuple, g[["track_id", "genre"]].astype("string").to_numpy()))
+                    )
+
+        # STYLES (explode vectorized)
+        if "styles_list" in df.columns:
+            s = (
+                df[["track_id", "styles_list"]]
+                .explode("styles_list", ignore_index=True)
+                .rename(columns={"styles_list": "style"})
+            )
+            if not s.empty:
+                s = s[s["style"].notna() & (s["style"].astype(str) != "")]
+                if not s.empty:
+                    styles_rows.extend(
+                        list(map(tuple, s[["track_id", "style"]].astype("string").to_numpy()))
+                    )
+
+    # ---------- public API ----------
+
+    def load(self) -> TablesDict:
+        engine = self._pick_engine()
+        header_cols = self._read_header()
+        needed = ["title", "release_year", "artists", "genres", "styles"]
+        usecols = [c for c in needed if c in header_cols]
+
+        # Accumulators across chunks
+        tracks_rows: List[Dict[str, object]] = []
+        artists_set: Set[str] = set()
+        genres_rows: List[Tuple[str, str]] = []
+        styles_rows: List[Tuple[str, str]] = []
+
+        print(f"[RecordsData] Reading CSV with engine={engine}, chunksize={self._chunksize or 0}")
+
+        if self._chunksize:
+            # Chunked read → must use engine 'c'
+            reader = pd.read_csv(
+                self.path,
+                dtype="string",
+                on_bad_lines="skip",
+                engine="c",
+                chunksize=self._chunksize,
+                usecols=usecols,
+            )
+            for chunk in self._progress.iter(reader, desc="Reading Records CSV (chunks)"):
+                self._process_chunk(chunk, tracks_rows, artists_set, genres_rows, styles_rows)
+        else:
+            # Single-pass read
+            if engine == "pyarrow":
+                df = pd.read_csv(self.path, dtype="string", engine="pyarrow", usecols=usecols)
+            else:
+                df = pd.read_csv(
+                    self.path, dtype="string", on_bad_lines="skip", engine="c", usecols=usecols
+                )
+            self._process_chunk(df, tracks_rows, artists_set, genres_rows, styles_rows)
+
+        # Build canonical tables
         tracks = (
-            pd.DataFrame(
+            pd.DataFrame(tracks_rows)
+            .astype(
                 {
-                    "track_id": df["track_id"].astype("string"),
-                    "track_name": df["title"].astype("string"),
-                    "album_id": pd.Series([None] * len(df), dtype="string"),
-                    "album_name": pd.Series([None] * len(df), dtype="string"),
-                    "artist_id": df["primary_artist"]
-                    .apply(lambda a: f"art::{a}" if a else "art::")
-                    .astype("string"),
-                    "isrc": pd.Series([None] * len(df), dtype="string"),
-                    "release_year": df["release_year"].astype("Int64"),
+                    "track_id": "string",
+                    "track_name": "string",
+                    "album_id": "string",
+                    "album_name": "string",
+                    "artist_id": "string",
+                    "isrc": "string",
+                    "release_year": "Int64",
                 }
             )
             .drop_duplicates(subset=["track_id"])
             .reset_index(drop=True)
         )
 
-        # Canonical ARTISTS (every unique artist token across rows)
-        all_artists = sorted({a for xs in df["artists_list"].tolist() for a in xs})
-        artists = pd.DataFrame(
-            {
-                "artist_id": pd.Series([f"art::{a}" for a in all_artists], dtype="string"),
-                "artist_name": pd.Series(all_artists, dtype="string"),
-            }
-        )
+        artists = pd.DataFrame({"artist_id": pd.Series(sorted(artists_set), dtype="string")})
+        if not artists.empty:
+            artists["artist_name"] = artists["artist_id"].str.replace(r"^art::", "", regex=True)
 
-        # Canonical GENRES (explode)
-        genres_rows: List[Tuple[str, str]] = []
-        for tid, glist in zip(df["track_id"].tolist(), df["genres_list"].tolist()):
-            for g in glist:
-                if g:
-                    genres_rows.append((tid, g))
         genres = pd.DataFrame(
             genres_rows, columns=["track_id", "genre"], dtype="string"
         ).drop_duplicates()
-
-        # Canonical STYLES (explode)
-        styles_rows: List[Tuple[str, str]] = []
-        for tid, slist in zip(df["track_id"].tolist(), df["styles_list"].tolist()):
-            for s in slist:
-                if s:
-                    styles_rows.append((tid, s))
         styles = pd.DataFrame(
             styles_rows, columns=["track_id", "style"], dtype="string"
         ).drop_duplicates()
 
-        # No plays in this source
         plays = pd.DataFrame([])
 
-        out: TablesDict = {
+        out_dict: Dict[str, pd.DataFrame] = {
             "plays": plays,
             "tracks": tracks,
             "artists": artists,
             "genres": genres,
         }
-        # only include styles if non-empty (keeps baseline schema stable)
         if not styles.empty:
-            out["styles"] = styles  # type: ignore[typeddict-unknown-key]
-        return out
+            out_dict["styles"] = styles
+
+        return cast(TablesDict, out_dict)

@@ -10,6 +10,7 @@ import pandas as pd
 
 from traverse.core.types import TablesDict
 from traverse.data.base import DataSource
+from traverse.utils.progress import Progress
 
 _HISTORY_GLOB = "Streaming_History_Audio_*.json"
 
@@ -65,9 +66,12 @@ class SpotifyExtendedExport(DataSource):
     Produces canonical tables; 'genres' is empty (to be enriched later).
     """
 
-    def __init__(self, export_dir: str | Path, *, recursive: bool = True) -> None:
+    def __init__(
+        self, export_dir: str | Path, *, recursive: bool = True, progress: bool = True
+    ) -> None:
         self.export_dir = Path(export_dir)
         self.recursive = bool(recursive)
+        self._progress = Progress(enabled=progress)
 
     def _iter_files(self) -> Iterable[Path]:
         return (
@@ -146,9 +150,11 @@ class SpotifyExtendedExport(DataSource):
         rows: List[Dict[str, Any]] = []
         file_count = 0
 
-        for p in sorted(self._iter_files()):
+        files = list(self._iter_files())
+        for p in self._progress.iter(files, desc="Scanning Spotify history", total=len(files)):
             file_count += 1
-            for raw in _read_json_array(p):
+            data = _read_json_array(p)
+            for raw in self._progress.iter(data, desc=f"Reading {p.name}", total=len(data)):
                 rec = self._coerce_record(raw)
                 rows.append(rec)
 
