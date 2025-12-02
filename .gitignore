@@ -41,3 +41,9 @@ _out/
 *.parquet
 *.csv
 *.json
+
+# local outputs
+_out/
+*.parquet
+*.csv
+*.json
