@@ -23,3 +23,21 @@ htmlcov/
 # OS / Editor 
 .DS_Store 
 .vscode/
+
+# local outputs
+_out/
+*.parquet
+*.csv
+*.json
+
+# local outputs
+_out/
+*.parquet
+*.csv
+*.json
+
+# local outputs
+_out/
+*.parquet
+*.csv
+*.json
