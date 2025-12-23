@@ -1,0 +1,50 @@
+electronic	rock	14116
+indie rock	rock	12239
+electronic	pop	11025
+electronic	synth-pop	10523
+electronic	house	9472
+pop	rock	8120
+electronic	experimental	7625
+psychedelic rock	rock	7551
+electro	electronic	7305
+electronic	hip hop	6697
+funk	soul	5180
+pop	synth-pop	5119
+hardcore hip-hop	hip hop	4856
+alternative rock	rock	4529
+indie pop	pop	4257
+electronic	indie rock	4089
+rock	synth-pop	4044
+downtempo	electronic	3564
+experimental	hip hop	3548
+hip hop	trap	3407
+rock	shoegaze	3382
+experimental	rock	3319
+pop rock	rock	3054
+electronic	hardcore hip-hop	2901
+electro	house	2799
+dream pop	rock	2726
+electronic	psychedelic rock	2688
+indie rock	pop	2644
+hip hop	pop rap	2634
+disco	electronic	2464
+hip hop	rock	2407
+abstract	electronic	2357
+ambient	electronic	2088
+dream pop	indie rock	2072
+electronic	funk	2032
+electronic	soul	2027
+experimental	hardcore hip-hop	2002
+electronic	leftfield	1937
+hardcore hip-hop	rock	1838
+alternative rock	electronic	1803
+electronic	indie pop	1759
+folk rock	rock	1756
+electronic	new wave	1715
+funk	hip hop	1643
+hip hop	soul	1643
+electronic	shoegaze	1603
+experimental	pop	1568
+dance-pop	electronic	1558
+new wave	rock	1550
+& country	folk	1543

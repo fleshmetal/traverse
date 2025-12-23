@@ -43,6 +43,6 @@ def main(extended_dir: str, records_dir: str):
 
 
 if __name__ == "__main__":
-    extended_dir = "/Users/anthony/Documents/Datasets/Spotify/ExtendedStreamingHistory"
-    records_dir = "/Users/anthony/Documents/Datasets/records"
+    extended_dir = "/Users/xtrem/Documents/Datasets/Spotify/anthony/ExtendedStreamingHistory"
+    records_dir = "/Users/xtrem/Documents/Datasets/records"
     main(extended_dir, records_dir)

@@ -1,178 +1,180 @@
 # src/traverse/processing/tables.py
 from __future__ import annotations
 
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import Dict, List, TypedDict, cast
 
 import pandas as pd
+from pandas import DataFrame
 
-from traverse.core.types import TablesDict
 from traverse.processing.base import Processor
-from traverse.processing.normalize import split_genres_styles, safe_str, coerce_year
+from traverse.processing.normalize import split_genres_styles, safe_str
+
+# Canonical tables contract used across the pipeline
+class TablesDict(TypedDict, total=False):
+    # Inputs (may exist in various shapes)
+    plays: DataFrame
+    tracks: DataFrame
+    artists: DataFrame
+    plays_wide: DataFrame
+    tracks_wide: DataFrame
+    artists_wide: DataFrame
+
+    # Optional extra pieces from earlier steps
+    genres: DataFrame
+    styles: DataFrame
 
 
-def _get_df(tables: TablesDict, key: str) -> pd.DataFrame:
-    """Safely fetch a DataFrame from TablesDict; return empty DF if not present/typed."""
-    val: Any = tables.get(key)
-    return val if isinstance(val, pd.DataFrame) else pd.DataFrame()
+def _ensure_columns(df: DataFrame, cols: List[str]) -> DataFrame:
+    out = df.copy()
+    for c in cols:
+        if c not in out.columns:
+            out[c] = pd.Series([pd.NA] * len(out))
+    return out
 
 
+def _coerce_tracks_to_canonical(tracks_in: DataFrame) -> DataFrame:
+    """
+    Normalize any track-like table to the canonical columns:
+      ['track_id','track_name','artist_name','genres','styles']
+    Accepts possible source columns like ['id','name','artist'].
+    """
+    df = tracks_in.copy()
+
+    # ID
+    if "track_id" not in df.columns:
+        if "id" in df.columns:
+            df = df.rename(columns={"id": "track_id"})
+        elif "track" in df.columns:
+            df = df.rename(columns={"track": "track_id"})
+        else:
+            # create empty track_id if truly missing
+            df["track_id"] = pd.NA
+
+    # Track name
+    if "track_name" not in df.columns:
+        if "name" in df.columns:
+            df = df.rename(columns={"name": "track_name"})
+        elif "title" in df.columns:
+            df = df.rename(columns={"title": "track_name"})
+        else:
+            df["track_name"] = pd.NA
+
+    # Artist display name (not ID)
+    if "artist_name" not in df.columns:
+        if "artist" in df.columns:
+            df = df.rename(columns={"artist": "artist_name"})
+        elif "artists" in df.columns:
+            # if list-like, keep as string for display
+            df["artist_name"] = df["artists"].astype("string")
+        else:
+            df["artist_name"] = pd.NA
+
+    # Genres / Styles: ensure string-delimited ( ' | ' ) columns exist
+    df = _ensure_columns(df, ["genres", "styles"])
+    for col in ("genres", "styles"):
+        # Accept list-like or string; normalize to ' | ' delimited strings
+        s = df[col]
+        if pd.api.types.is_list_like(s.iloc[0]) if len(df) else False:
+            df[col] = s.apply(lambda x: " | ".join(map(safe_str, cast(List[str], x))) if isinstance(x, list) else safe_str(x))
+        else:
+            # already string-like; just coerce to string and clean doubles
+            df[col] = df[col].astype("string").fillna("")
+
+    # Minimal select & dedupe
+    keep = ["track_id", "track_name", "artist_name", "genres", "styles"]
+    df = _ensure_columns(df, keep)[keep].drop_duplicates(subset=["track_id"], keep="first").reset_index(drop=True)
+    return df
+
+
+def _coerce_plays_to_canonical(plays_in: DataFrame) -> DataFrame:
+    """
+    Normalize play rows to ensure at least:
+      ['played_at','track_id','ms_played']
+    """
+    df = plays_in.copy()
+
+    # track_id
+    if "track_id" not in df.columns:
+        if "id" in df.columns:
+            df = df.rename(columns={"id": "track_id"})
+        elif "track" in df.columns:
+            df = df.rename(columns={"track": "track_id"})
+        else:
+            df["track_id"] = pd.NA
+
+    # played_at
+    if "played_at" not in df.columns:
+        if "ts" in df.columns:
+            df = df.rename(columns={"ts": "played_at"})
+        else:
+            df["played_at"] = pd.NaT
+    df["played_at"] = pd.to_datetime(df["played_at"], errors="coerce", utc=True)
+
+    # ms_played
+    if "ms_played" not in df.columns:
+        if "ms" in df.columns:
+            df = df.rename(columns={"ms": "ms_played"})
+        else:
+            df["ms_played"] = pd.NA
+
+    keep = ["played_at", "track_id", "ms_played"]
+    df = _ensure_columns(df, keep)[keep].copy()
+    return df
+
+
+@dataclass
 class BuildCanonicalTables(Processor):
     """
-    Produce canonical, analysis-ready tables:
-      - plays_wide: one row per play (joined genre/style strings when available)
-      - tracks_wide: one row per track (joined genre/style strings)
+    Week 4 processor: produce canonical wide tables with a stable schema
+    that downstream code depends on.
 
-    Expected inputs (best-effort, all optional):
-      plays[played_at, track_id, ms_played, source, artist_name, track_name, ...]
-      tracks[track_id, track_name, artist_id?, artist_name?, release_year?]
-      artists[artist_id, artist_name]
-      genres[track_id, genre]
-      styles[track_id, style]
+    Output keys:
+      - plays_wide:  per-play rows with joined track_name / artist_name / genres / styles
+      - tracks_wide: per-track rows with the same fields
+      - artists_wide: optional, pass-through if available (normalized name only)
     """
 
-    def __init__(self, join_delim: str = " | "):
-        self.join_delim = join_delim
+    def run(self, tables: Dict[str, DataFrame]) -> TablesDict:  # type: ignore[override]
+        # Accept multiple possible keys from earlier steps
+        plays_in: DataFrame = cast(DataFrame, tables.get("plays_wide", tables.get("plays", pd.DataFrame())))
+        tracks_in: DataFrame = cast(DataFrame, tables.get("tracks_wide", tables.get("tracks", pd.DataFrame())))
+        artists_in: DataFrame = cast(DataFrame, tables.get("artists_wide", tables.get("artists", pd.DataFrame())))
 
-    def run(self, tables: TablesDict) -> TablesDict:
-        # --- Fetch as proper DataFrames for mypy and robustness
-        plays = _get_df(tables, "plays").copy()
-        tracks = _get_df(tables, "tracks").copy()
-        artists = _get_df(tables, "artists").copy()
-        genres = _get_df(tables, "genres").copy()
-        styles = _get_df(tables, "styles").copy()
+        plays = _coerce_plays_to_canonical(plays_in)
+        tracks_wide = _coerce_tracks_to_canonical(tracks_in)
 
-        # ---- Dedup & basic coercions
-        if not plays.empty:
-            plays = plays.drop_duplicates()
-            # Ensure essential columns exist
-            for c in ("track_id", "played_at"):
-                if c not in plays.columns:
-                    plays[c] = pd.NA
-            plays["track_id"] = plays["track_id"].astype("string")
-            plays["played_at"] = pd.to_datetime(plays["played_at"], errors="coerce", utc=True)
+        # Left join to decorate plays with display fields
+        sel_cols = ["track_id", "track_name", "artist_name", "genres", "styles"]
+        plays_wide = plays.merge(tracks_wide[sel_cols], on="track_id", how="left")
 
-        if not tracks.empty:
-            tracks = tracks.drop_duplicates()
-            for c in ("track_id", "track_name"):
-                if c not in tracks.columns:
-                    tracks[c] = pd.NA
-            tracks["track_id"] = tracks["track_id"].astype("string")
-            tracks["track_name"] = tracks["track_name"].astype("string")
-            # Some exports have artist_name in tracks (without artist_id); keep it if present
-            if "artist_name" in tracks.columns:
-                tracks["artist_name"] = tracks["artist_name"].astype("string")
-            if "release_year" in tracks.columns:
-                tracks["release_year"] = tracks["release_year"].apply(coerce_year)
+        # Clean up string columns (no NA, consistent delimiter)
+        for col in ("track_id", "track_name", "artist_name", "genres", "styles"):
+            if col in plays_wide.columns:
+                plays_wide[col] = plays_wide[col].astype("string").fillna("")
 
-        if not artists.empty:
-            artists = artists.drop_duplicates()
-            for c in ("artist_id", "artist_name"):
-                if c not in artists.columns:
-                    artists[c] = pd.NA
-            artists["artist_id"] = artists["artist_id"].astype("string")
-            artists["artist_name"] = artists["artist_name"].astype("string")
+        # Artists wide (optional) — normalize a minimal display table if present
+        artists_wide = pd.DataFrame(columns=["artist_id", "artist_name"])
+        if len(artists_in):
+            a = artists_in.copy()
+            if "artist_id" not in a.columns:
+                if "id" in a.columns:
+                    a = a.rename(columns={"id": "artist_id"})
+                else:
+                    a["artist_id"] = pd.NA
+            if "artist_name" not in a.columns:
+                if "name" in a.columns:
+                    a = a.rename(columns={"name": "artist_name"})
+                else:
+                    a["artist_name"] = pd.NA
+            artists_wide = a[["artist_id", "artist_name"]].drop_duplicates("artist_id").reset_index(drop=True)
+            artists_wide["artist_id"] = artists_wide["artist_id"].astype("string").fillna("")
+            artists_wide["artist_name"] = artists_wide["artist_name"].astype("string").fillna("")
 
-        # ---- Aggregate genres/styles per track_id to lists
-        g_agg = pd.DataFrame({"track_id": [], "genres": []})
-        if not genres.empty and {"track_id", "genre"}.issubset(genres.columns):
-            tmp = (
-                genres[["track_id", "genre"]]
-                .dropna(subset=["track_id"])
-                .astype({"track_id": "string"})
-            )
-            tmp["genre"] = tmp["genre"].astype("string").apply(split_genres_styles)
-            tmp = tmp.explode("genre", ignore_index=True).dropna(subset=["genre"])
-            g_agg = (
-                tmp.groupby("track_id")["genre"]
-                .agg(lambda s: sorted(set(map(safe_str, s))))
-                .reset_index()
-                .rename(columns={"genre": "genres"})
-            )
-
-        s_agg = pd.DataFrame({"track_id": [], "styles": []})
-        if not styles.empty and {"track_id", "style"}.issubset(styles.columns):
-            tmp = (
-                styles[["track_id", "style"]]
-                .dropna(subset=["track_id"])
-                .astype({"track_id": "string"})
-            )
-            tmp["style"] = tmp["style"].astype("string").apply(split_genres_styles)
-            tmp = tmp.explode("style", ignore_index=True).dropna(subset=["style"])
-            s_agg = (
-                tmp.groupby("track_id")["style"]
-                .agg(lambda s: sorted(set(map(safe_str, s))))
-                .reset_index()
-                .rename(columns={"style": "styles"})
-            )
-
-        # ---- tracks_wide: tracks + artists + tags
-        tracks_wide = tracks.copy()
-
-        # If we have artist_id on tracks, enrich with artists table
-        if not artists.empty and "artist_id" in tracks_wide.columns:
-            tracks_wide = tracks_wide.merge(artists, on="artist_id", how="left")
-
-        # Attach tag aggregates when available; otherwise ensure columns exist
-        if not g_agg.empty:
-            tracks_wide = tracks_wide.merge(g_agg, on="track_id", how="left")
-        else:
-            tracks_wide["genres"] = [[] for _ in range(len(tracks_wide))]
-
-        if not s_agg.empty:
-            tracks_wide = tracks_wide.merge(s_agg, on="track_id", how="left")
-        else:
-            tracks_wide["styles"] = [[] for _ in range(len(tracks_wide))]
-
-        # Join tag lists into single string columns
-        for col in ("genres", "styles"):
-            if col in tracks_wide.columns:
-                tracks_wide[col] = (
-                    tracks_wide[col]
-                    .apply(
-                        lambda v: self.join_delim.join(v) if isinstance(v, list) else safe_str(v)
-                    )
-                    .astype("string")
-                )
-
-        # ---- plays_wide = plays + selected track columns (only those that exist)
-        # Prefer taking names from tracks_wide if present; otherwise plays already carries what it has.
-        candidate_cols = [
-            "track_id",
-            "track_name",
-            "artist_id",
-            "artist_name",
-            "release_year",
-            "genres",
-            "styles",
-        ]
-        sel_cols = [c for c in candidate_cols if c in tracks_wide.columns]
-        if sel_cols:
-            plays_wide = plays.merge(tracks_wide[sel_cols], on="track_id", how="left")
-        else:
-            plays_wide = plays.copy()
-
-        # Stable column order, but only include columns that exist
-        preferred_order = [
-            "played_at",
-            "track_id",
-            "ms_played",
-            "source",
-            "artist_name",
-            "track_name",
-            "release_year",
-            "genres",
-            "styles",
-        ]
-        final_order = [c for c in preferred_order if c in plays_wide.columns] + [
-            c for c in plays_wide.columns if c not in preferred_order
-        ]
-        plays_wide = plays_wide[final_order]
-
-        # ---- Build return mapping as dict[str, DataFrame]
-        out_dict: dict[str, pd.DataFrame] = {}
-        for k, v in tables.items():
-            if isinstance(v, pd.DataFrame):
-                out_dict[k] = v
-        out_dict["plays_wide"] = plays_wide
-        out_dict["tracks_wide"] = tracks_wide
-        return cast(TablesDict, out_dict)
+        out: TablesDict = {
+            "plays_wide": plays_wide,
+            "tracks_wide": tracks_wide,
+        }
+        if len(artists_wide):
+            out["artists_wide"] = artists_wide
+        return out

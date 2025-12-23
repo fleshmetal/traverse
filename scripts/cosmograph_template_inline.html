@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>Cosmograph Smoke</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <style>
+      html, body, #app { height: 100%; margin: 0; background: #0b0f19; color: #e6edf3; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!-- Inline the data to avoid CORS issues when opening directly from disk -->
+    <script id="graphData" type="application/json">__INLINE_GRAPH_JSON__</script>
+
+    <script type="module">
+      import { Cosmograph, prepareCosmographData } from "https://unpkg.com/@cosmograph/cosmograph?module";
+
+      const raw = JSON.parse(document.getElementById("graphData").textContent);
+
+      // Map your schema to Cosmograph fields
+      const points = (raw.nodes || []).map(n => ({
+        id: String(n.id),
+        label: n.label ?? String(n.id),
+        type: n.type ?? "unknown"
+      }));
+
+      const links = (raw.edges || []).map(e => ({
+        source: String(e.src),
+        target: String(e.dst),
+        weight: Number(e.weight ?? 1)
+      }));
+
+      const dataConfig = {
+        points: { pointIdBy: "id" },
+        links:  { linkSourceBy: "source", linkTargetsBy: ["target"] }
+      };
+
+      const { points: P, links: L, cosmographConfig } =
+        await prepareCosmographData(dataConfig, points, links);
+
+      const cg = new Cosmograph(document.getElementById("app"), {
+        points: P,
+        links: L,
+        ...cosmographConfig,
+        simulation: { gravity: 0.4 },
+        point: {
+          size: { by: "degree" },
+          label: { enabled: true, textBy: "label" }
+        },
+        link: { widthBy: "weight" }
+      });
+    </script>
+  </body>
+</html>
