@@ -100,7 +100,6 @@ class FastGenreStyleEnricher(Processor):
     # ---------- collect needed keys from Extended ----------
 
     @staticmethod
-    @staticmethod
     def _collect_needed_keys(
         tables: TablesDict,
     ) -> Tuple[pd.DataFrame, Set[str], Dict[str, Set[str]]]:

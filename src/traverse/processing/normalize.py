@@ -1,5 +1,7 @@
 # src/traverse/processing/normalize.py
 from __future__ import annotations
+
+import json as _json
 from typing import List, Sequence, Tuple
 
 DELIMS_DEFAULT: Tuple[str, ...] = ("|", ",", ";")
@@ -62,4 +64,51 @@ def split_genres_styles(
                 out.append(t)
         else:
             out.append(t)
+    return out
+
+
+_SENTINELS = frozenset({"nan", "none", "null", "na", "<na>", "n/a"})
+
+
+def split_tags(
+    val: object | None,
+    delimiters: Sequence[str] = DELIMS_DEFAULT,
+    dedupe: bool = True,
+    lower: bool = True,
+) -> List[str]:
+    """Robust tag splitter that handles JSON arrays, sentinel values, and
+    multi-delimiter splitting.  Wraps :func:`split_genres_styles` with extra
+    pre-processing for the edge-cases found across export scripts."""
+    raw = safe_str(val)
+    if not raw:
+        return []
+    if raw.lower() in _SENTINELS:
+        return []
+    if raw == "[]":
+        return []
+    # Try JSON array literal, e.g. '["rock","pop"]'
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            arr = _json.loads(raw)
+            if isinstance(arr, list):
+                raw = "|".join(str(x) for x in arr if str(x).strip())
+        except Exception:
+            pass
+    return split_genres_styles(raw, delimiters=delimiters, dedupe=dedupe, lower=lower)
+
+
+_PRETTY_SUBS = {
+    "Idm": "IDM",
+    "Edm": "EDM",
+    "Dnb": "DnB",
+    "Uk ": "UK ",
+    "Dj ": "DJ ",
+}
+
+
+def pretty_label(tag: str) -> str:
+    """Convert a normalized tag to a human-readable display label."""
+    out = str(tag).title()
+    for k, v in _PRETTY_SUBS.items():
+        out = out.replace(k, v)
     return out
