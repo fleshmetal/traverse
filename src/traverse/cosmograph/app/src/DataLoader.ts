@@ -1,9 +1,14 @@
 import { prepareCosmographData } from '@cosmograph/react';
 
+export type ClusterGroup = { count: number; indices: number[] };
+
 export type LoadedInputs = {
   prepared: any;
   hasPointTime: boolean;
   hasLinkTime: boolean;
+  hasCluster: boolean;
+  clusterField: string | null;
+  clusterGroups: Map<string, ClusterGroup>;
   raw: { points: any[]; links: any[] };
   idToIndex: Map<string, number>;
   edgeToIndex: Map<string, number>;
@@ -47,6 +52,20 @@ function normalizeTimeField(rows: any[], candidateNames: string[]): { has: boole
   return anyValid ? { has: true, field: 'first_seen_ts' } : { has: false };
 }
 
+function detectClusterField(
+  points: any[],
+  meta: Record<string, any> | undefined,
+): string | null {
+  // 1. URL override: ?cluster=<field>
+  const urlOverride = new URLSearchParams(window.location.search).get('cluster');
+  if (urlOverride) return urlOverride;
+  // 2. JSON meta.clusterField
+  if (meta?.clusterField && typeof meta.clusterField === 'string') return meta.clusterField;
+  // 3. Auto-detect "category" on first point
+  if (Array.isArray(points) && points.length > 0 && points[0]?.category != null) return 'category';
+  return null;
+}
+
 function ensurePointLabels(points: any[]) {
   for (const p of points) {
     if (p && (p.label == null)) p.label = p.id;
@@ -60,12 +79,18 @@ function edgeKey(a: string, b: string) {
 export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
   const resp = await fetch(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
-  const json = await resp.json() as { points?: any[]; links?: any[]; cosmographConfig?: any };
+  const json = await resp.json() as { points?: any[]; links?: any[]; meta?: Record<string, any>; cosmographConfig?: any };
 
   const points = Array.isArray(json.points) ? [...json.points] : [];
   const links  = Array.isArray(json.links)  ? [...json.links]  : [];
+  const meta   = json.meta ?? undefined;
 
   console.debug('[DBG] Raw sizes', { points: points.length, links: links.length });
+
+  // Cluster detection
+  const clusterField = detectClusterField(points, meta);
+  const hasCluster = clusterField !== null;
+  console.debug('[DBG] cluster detection:', { hasCluster, clusterField });
 
   // labels always present
   ensurePointLabels(points);
@@ -77,12 +102,28 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
   console.debug('[DBG] links time detection:',  { detected: lkTime.has });
 
   // Build DataKit config (THIS is the correct signature!)
+  const pointIncludeCols = ['label'];
+  if (hasCluster && clusterField) pointIncludeCols.push(clusterField);
+
   const dataConfig: any = {
     points: {
       pointIdBy: 'id',
       pointLabelBy: 'label',
-      pointIncludeColumns: ['label', ...(ptTime.has ? ['first_seen_ts'] : [])],
+      pointIncludeColumns: pointIncludeCols,
       ...(ptTime.has ? { pointTimeBy: 'first_seen_ts' } : {}),
+      ...(hasCluster && clusterField ? {
+        pointClusterBy: clusterField,
+        pointColorBy: clusterField,
+        pointColorStrategy: 'categorical',
+        pointColorPalette: [
+          '#00e5ff', // cyan
+          '#ff4081', // pink
+          '#76ff03', // lime
+          '#ffea00', // yellow
+          '#e040fb', // purple
+          '#ff6e40', // orange
+        ],
+      } : {}),
     },
     links: {
       linkSourceBy: 'source',
@@ -116,10 +157,32 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
     }
   });
 
+  // Build cluster groups (indices grouped by cluster value, sorted by count desc)
+  const clusterGroups = new Map<string, ClusterGroup>();
+  if (hasCluster && clusterField) {
+    const tmp = new Map<string, number[]>();
+    points.forEach((p, i) => {
+      const val = p?.[clusterField];
+      if (val == null) return;
+      const key = String(val);
+      let arr = tmp.get(key);
+      if (!arr) { arr = []; tmp.set(key, arr); }
+      arr.push(i);
+    });
+    // sort by count descending
+    const sorted = [...tmp.entries()].sort((a, b) => b[1].length - a[1].length);
+    for (const [key, indices] of sorted) {
+      clusterGroups.set(key, { count: indices.length, indices });
+    }
+  }
+
   return {
     prepared,
     hasPointTime: !!ptTime.has,
     hasLinkTime:  !!lkTime.has,
+    hasCluster,
+    clusterField,
+    clusterGroups,
     raw: { points, links },
     idToIndex,
     edgeToIndex,

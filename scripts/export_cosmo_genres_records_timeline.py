@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json, re, sys
+import argparse, datetime, json, re, sys
 from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
@@ -94,7 +94,7 @@ def main() -> None:
     ap.add_argument("--min-cooccurrence", type=int, default=2)
     ap.add_argument("--max-edges", type=int, default=40_000, help="0 = no cap")
     ap.add_argument("--max-nodes", type=int, default=5_000, help="0 = no cap")
-    ap.add_argument("--out-json", default="public/cosmo_genres_records_timeline.json")
+    ap.add_argument("--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_records_timeline.json")
     ap.add_argument("--progress", action="store_true")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
@@ -105,7 +105,6 @@ def main() -> None:
     if args.debug: dbg_dir.mkdir(parents=True, exist_ok=True)
 
     YEAR_MIN, YEAR_MAX = int(args.year_min), int(args.year_max)
-    YEAR_MS = int(365.25 * 24 * 60 * 60 * 1000)
 
     def clamp_year(y: Optional[int]) -> Optional[int]:
         if y is None: return None
@@ -113,8 +112,9 @@ def main() -> None:
         return y
 
     def year_to_ts(y: Optional[int]) -> Optional[int]:
+        """Convert year to Unix epoch milliseconds (Jan 1 of that year UTC)."""
         if y is None: return None
-        return int((y - YEAR_MIN) * YEAR_MS)
+        return int(datetime.datetime(y, 1, 1, tzinfo=datetime.timezone.utc).timestamp() * 1000)
 
     counts: Counter[Tuple[str,str]] = Counter()
     edge_first_year: Dict[Tuple[str,str], int] = {}

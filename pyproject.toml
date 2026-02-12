@@ -42,3 +42,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"traverse.cosmograph" = [
+    "app/dist/**/*",
+    "app/dist/*",
+]

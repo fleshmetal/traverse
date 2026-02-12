@@ -185,7 +185,7 @@ def main() -> None:
     ap.add_argument("--max-edges", type=int, default=40_000, help="0 = no cap")
     ap.add_argument("--max-nodes", type=int, default=5_000, help="0 = no cap")
     ap.add_argument("--cache-dir", default="_out")
-    ap.add_argument("--out-json", default="public/cosmo_genres_timeline.json")
+    ap.add_argument("--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_timeline.json")
     ap.add_argument("--progress", action="store_true")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
