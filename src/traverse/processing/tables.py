@@ -123,6 +123,43 @@ def _coerce_plays_to_canonical(plays_in: DataFrame) -> DataFrame:
     return df
 
 
+def _fold_genre_style_tables(tracks: DataFrame, tables: Dict[str, DataFrame]) -> DataFrame:
+    """Merge separate genres/styles tables onto tracks as pipe-delimited columns.
+
+    FastGenreStyleEnricher outputs genres and styles as separate DataFrames
+    (track_id, genre) and (track_id, style). This folds them into the tracks
+    DataFrame as ' | '-delimited string columns so _coerce_tracks_to_canonical
+    can pick them up.
+    """
+    df = tracks.copy()
+
+    genres_df = tables.get("genres", pd.DataFrame())
+    if not genres_df.empty and "track_id" in genres_df.columns and "genre" in genres_df.columns:
+        g_agg = (
+            genres_df.groupby("track_id")["genre"]
+            .agg(lambda x: " | ".join(sorted(set(x.dropna().astype(str)))))
+            .reset_index()
+            .rename(columns={"genre": "genres"})
+        )
+        if "genres" in df.columns:
+            df = df.drop(columns=["genres"])
+        df = df.merge(g_agg, on="track_id", how="left")
+
+    styles_df = tables.get("styles", pd.DataFrame())
+    if not styles_df.empty and "track_id" in styles_df.columns and "style" in styles_df.columns:
+        s_agg = (
+            styles_df.groupby("track_id")["style"]
+            .agg(lambda x: " | ".join(sorted(set(x.dropna().astype(str)))))
+            .reset_index()
+            .rename(columns={"style": "styles"})
+        )
+        if "styles" in df.columns:
+            df = df.drop(columns=["styles"])
+        df = df.merge(s_agg, on="track_id", how="left")
+
+    return df
+
+
 @dataclass
 class BuildCanonicalTables(Processor):
     """
@@ -140,6 +177,9 @@ class BuildCanonicalTables(Processor):
         plays_in: DataFrame = cast(DataFrame, tables.get("plays_wide", tables.get("plays", pd.DataFrame())))
         tracks_in: DataFrame = cast(DataFrame, tables.get("tracks_wide", tables.get("tracks", pd.DataFrame())))
         artists_in: DataFrame = cast(DataFrame, tables.get("artists_wide", tables.get("artists", pd.DataFrame())))
+
+        # Fold separate genres/styles tables (from FastGenreStyleEnricher) onto tracks
+        tracks_in = _fold_genre_style_tables(tracks_in, tables)
 
         plays = _coerce_plays_to_canonical(plays_in)
         tracks_wide = _coerce_tracks_to_canonical(tracks_in)

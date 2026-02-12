@@ -1,4 +1,4 @@
-# scripts/smoke_graph.py
+# scripts/test_graph.py
 from __future__ import annotations
 
 import argparse

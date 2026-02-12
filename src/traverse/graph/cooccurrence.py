@@ -53,6 +53,9 @@ class CooccurrenceBuilder:
         init=False, repr=False, default_factory=dict
     )
     _node_labels: Dict[str, str] = field(init=False, repr=False, default_factory=dict)
+    _node_categories: Dict[str, Counter] = field(
+        init=False, repr=False, default_factory=lambda: defaultdict(Counter)
+    )
     _rows_seen: int = field(init=False, repr=False, default=0)
     _rows_with_tags: int = field(init=False, repr=False, default=0)
     _rows_with_pairs: int = field(init=False, repr=False, default=0)
@@ -64,6 +67,7 @@ class CooccurrenceBuilder:
         self._node_first_seen = {}
         self._edge_first_seen = {}
         self._node_labels = {}
+        self._node_categories = defaultdict(Counter)
         self._rows_seen = 0
         self._rows_with_tags = 0
         self._rows_with_pairs = 0
@@ -87,6 +91,7 @@ class CooccurrenceBuilder:
         *,
         timestamp_ms: Optional[int] = None,
         label_fn: Optional[Callable[[str], str]] = None,
+        tag_categories: Optional[Dict[str, str]] = None,
     ) -> None:
         """Add a single observation (e.g. one play row) with its tags.
 
@@ -94,6 +99,7 @@ class CooccurrenceBuilder:
             tags: normalized tag strings (already lowered/cleaned).
             timestamp_ms: optional epoch-millisecond timestamp for timeline.
             label_fn: optional function to compute display label from tag id.
+            tag_categories: optional mapping from tag -> category (e.g. "genre"/"style").
         """
         self._rows_seen += 1
         if not tags:
@@ -109,6 +115,8 @@ class CooccurrenceBuilder:
                 prev = self._node_first_seen.get(t)
                 if prev is None or timestamp_ms < prev:
                     self._node_first_seen[t] = timestamp_ms
+            if tag_categories and t in tag_categories:
+                self._node_categories[t][tag_categories[t]] += 1
 
         pairs = list(self._cooccurrence_pairs(list(unique_tags)))
         if pairs:
@@ -120,6 +128,14 @@ class CooccurrenceBuilder:
                 prev = self._edge_first_seen.get(key)
                 if prev is None or timestamp_ms < prev:
                     self._edge_first_seen[key] = timestamp_ms
+
+    # ------------------------------------------------------------------
+    def _resolve_category(self, tag: str) -> Optional[str]:
+        """Return the majority-vote category for *tag*, or None if unset."""
+        cats = self._node_categories.get(tag)
+        if not cats:
+            return None
+        return cats.most_common(1)[0][0]
 
     # ------------------------------------------------------------------
     def build(
@@ -169,6 +185,9 @@ class CooccurrenceBuilder:
             pt: Dict[str, Any] = {"id": nid, "label": lbl or nid}
             if nid in self._node_first_seen:
                 pt["first_seen"] = int(self._node_first_seen[nid])
+            cat = self._resolve_category(nid)
+            if cat is not None:
+                pt["category"] = cat
             points.append(pt)
 
         # 7. Build links

@@ -233,7 +233,7 @@ def main() -> None:
     ap.add_argument("--min-cooccurrence", type=int, default=2)
     ap.add_argument("--max-edges", type=int, default=40_000, help="0 = no cap")
     ap.add_argument("--max-nodes", type=int, default=5_000, help="0 = no cap")
-    ap.add_argument("--out-json", default="public/cosmo_genres_spotify.json")
+    ap.add_argument("--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_spotify.json")
     ap.add_argument("--cache-dir", default="_out", help="Where canonical_* are cached/loaded")
     ap.add_argument("--progress", action="store_true")
     ap.add_argument("--force", action="store_true", help="Rebuild canonicals even if cache exists")

@@ -142,7 +142,7 @@ def main(
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
-        description="Smoke test: fast streaming enrichment (Records → Extended)"
+        description="Test: fast streaming enrichment (Records → Extended)"
     )
     p.add_argument("--extended-dir", required=True)
     p.add_argument("--records-csv", required=True)

@@ -7,43 +7,28 @@ __pycache__/
 *.egg-info/
 *.eggs/
 
-# Envs 
+# Envs
 .venv/
 .env
 .env.*
 
-# Build 
-dist/
-build/
+# Build (Python sdist/wheel at repo root)
+/dist/
+/build/
 
 # Coverage
 .coverage
 htmlcov/
 
-# OS / Editor 
-.DS_Store 
+# OS / Editor
+.DS_Store
 .vscode/
 
-# local outputs
+# Local outputs
 _out/
 *.parquet
 *.csv
 *.json
 
-# local outputs
-_out/
-*.parquet
-*.csv
-*.json
-
-# local outputs
-_out/
-*.parquet
-*.csv
-*.json
-
-# local outputs
-_out/
-*.parquet
-*.csv
-*.json
+# Node
+node_modules/

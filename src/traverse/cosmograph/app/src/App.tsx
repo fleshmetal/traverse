@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './labels.css';
 import {
   Cosmograph,
@@ -9,34 +9,39 @@ import {
 } from '@cosmograph/react';
 import { loadAndPrepare, type LoadedInputs } from './DataLoader';
 
-function parseSelectionsFromURL() {
-  const q = new URLSearchParams(window.location.search);
-  const selNodes = (q.get('sel_nodes') ?? '')
-    .split(',').map(s => s.trim()).filter(Boolean);
-  const selEdges = (q.get('sel_edges') ?? '')
-    .split(';').map(s => s.trim()).filter(Boolean)
-    .map(pair => {
-      const [a, b] = pair.split('|').map(t => t.trim());
-      return (a && b) ? [a, b] as [string, string] : null;
-    })
-    .filter((x): x is [string, string] => Array.isArray(x));
-  return { selNodes, selEdges };
-}
-const edgeKey = (a: string, b: string) => (a < b ? `${a}→${b}` : `${b}→${a}`);
+const CLUSTER_PALETTE = [
+  '#00e5ff', '#ff4081', '#76ff03', '#ffea00', '#e040fb', '#ff6e40',
+];
+
+const UNKNOWN_COLOR = 'rgba(205, 207, 213, 0.9)';
+const DIM_COLOR = 'rgba(138, 138, 138, 0.2)';
 
 export default function App() {
   const dataUrl = useMemo(
     () => new URLSearchParams(window.location.search).get('data') ?? '/cosmo_genres_timeline.json',
     []
   );
-  const { selNodes, selEdges } = useMemo(parseSelectionsFromURL, []);
 
   const [loaded, setLoaded] = useState<LoadedInputs | null>(null);
   const [cfg, setCfg] = useState<CosmographConfig | null>(null);
   const [labelsOn, setLabelsOn] = useState(true);
+  const [clusterOn, setClusterOn] = useState(true);
   const [status, setStatus] = useState('Loading…');
 
   const cosmoRef = useRef<CosmographInstance | null>(null);
+  const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(true);
+
+  // Build a stable color map: cluster value → palette color (frequency-desc order,
+  // matching Cosmograph's internal categorical assignment)
+  const clusterColorMap = useMemo(() => {
+    if (!loaded?.hasCluster) return null;
+    const map = new Map<string, string>();
+    [...loaded.clusterGroups.entries()].forEach(([key], i) => {
+      map.set(key, CLUSTER_PALETTE[i % CLUSTER_PALETTE.length]);
+    });
+    return map;
+  }, [loaded]);
 
   useEffect(() => {
     let alive = true;
@@ -50,12 +55,27 @@ export default function App() {
           ...(inputs.prepared?.cosmographConfig ?? {}),
           points: inputs.prepared?.points,
           links:  inputs.prepared?.links,
-          labels: { enabled: true, maxLabelCount: 10000 },
-          // keep your css + white labels
+          // Label config — flat keys, not nested (Cosmograph ignores nested `labels` obj)
+          showLabels: true,
+          showDynamicLabels: true,
+          showTopLabels: true,
+          showTopLabelsLimit: 200,
           pointLabelClassName: 'genre-label',
           clusterLabelClassName: 'cluster-label',
           pointLabelColor: '#ffffff',
           clusterLabelColor: '#ffffff',
+          simulationFriction: 0.7,
+          simulationDecay: 3000,
+          curvedLinks: true,
+          curvedLinkSegments: 19,
+          curvedLinkWeight: 0.8,
+          curvedLinkControlPointDistance: 0.5,
+          ...(inputs.hasCluster ? {
+            simulationCluster: 0.8,
+            showClusterLabels: true,
+            scaleClusterLabels: true,
+            pointColorBy: inputs.clusterField ?? undefined,
+          } : {}),
         };
 
         setLoaded(inputs);
@@ -72,72 +92,104 @@ export default function App() {
 
   useEffect(() => {
     if (!cfg) return;
-    setCfg(prev => prev ? { ...prev, labels: { ...(prev.labels as any ?? {}), enabled: labelsOn } } : prev);
+    setCfg(prev => prev ? { ...prev, showLabels: labelsOn, showDynamicLabels: labelsOn, showTopLabels: labelsOn } : prev);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labelsOn]);
 
+  useEffect(() => {
+    if (!cfg || !loaded?.hasCluster) return;
+    setCfg(prev => {
+      if (!prev) return prev;
+      if (clusterOn) {
+        return {
+          ...prev,
+          simulationCluster: 0.8,
+          showClusterLabels: true,
+          pointColorBy: loaded.clusterField ?? undefined,
+        };
+      }
+      return {
+        ...prev,
+        simulationCluster: 0.1,
+        showClusterLabels: false,
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clusterOn]);
+
   const hasTimeline = !!loaded && (loaded.hasPointTime || loaded.hasLinkTime);
 
-  // Apply URL-driven selections after the instance is ready
-  useEffect(() => {
-    async function applySelections() {
-      const inst = cosmoRef.current;
-      const inputs = loaded;
-      if (!inst || !inputs) return;
+  // Point IDs for the selected cluster (used for showLabelsFor)
+  const selectedPointIds = useMemo(() => {
+    if (!loaded || selectedCluster == null) return undefined;
+    const group = loaded.clusterGroups.get(selectedCluster);
+    if (!group) return undefined;
+    return group.indices
+      .map(i => loaded.raw.points[i]?.id)
+      .filter((id: any): id is string => id != null)
+      .map(String);
+  }, [loaded, selectedCluster]);
 
-      console.log('[Debug] Applying selections...', { selNodes, selEdges });
+  // Build final config using pointColorByFn (the correct Cosmograph API for custom coloring).
+  // activePointColorStrategy is a read-only getter, NOT a config callback.
+  const finalCfg = useMemo(() => {
+    if (!cfg || !loaded?.hasCluster || !loaded?.clusterField || !clusterColorMap) return cfg;
 
-      // Map ids → indices
-      const nodeIdxs = selNodes
-        .map(id => inputs.idToIndex.get(id))
-        .filter((x): x is number => typeof x === 'number');
-      
-      console.log('[Debug] Mapped node IDs to indices:', { nodeIdxs });
-
-      // Select points via API (native)
-      if (nodeIdxs.length) inst.selectPoints(nodeIdxs);
-      else inst.unselectAllPoints?.();
-
-      const nodeIdxSet = new Set(nodeIdxs);
-      console.log('[Debug] Created node index set:', nodeIdxSet);
-
-      // Precompute explicitly selected edge indices if available
-      const selectedEdgeIdxs = new Set<number>();
-      for (const [a, b] of selEdges) {
-        const idx = inputs.edgeToIndex.get(edgeKey(a, b));
-        if (typeof idx === 'number') selectedEdgeIdxs.add(idx);
-      }
-      console.log('[Debug] Created edge index set:', selectedEdgeIdxs);
-
-      // Strategies react to current selection
-      const hasAnySelection = nodeIdxSet.size > 0 || selectedEdgeIdxs.size > 0;
-      console.log('[Debug] Setting config with hasAnySelection=', hasAnySelection);
-
-      inst.setConfig({
-        activePointColorStrategy: hasAnySelection
-          ? (_row: any, idx: number) => (nodeIdxSet.has(idx) ? 'rgba(255, 255, 255, 1)' : 'rgba(138, 138, 138, 0.2)')
-          : undefined,
-        activePointSizeStrategy: hasAnySelection
-          ? (_row: any, idx: number) => (nodeIdxSet.has(idx) ? 5 : 3)
-          : undefined,
-        activePointLabelColorStrategy: hasAnySelection
-          ? (_row: any, idx: number) => (nodeIdxSet.has(idx) ? 'rgba(255, 255, 255, 1)' : 'transparent')
-          : undefined,
-        activeLinkColorStrategy: hasAnySelection
-          ? (row: any) => {
-              const s = row['sourceidx'] as number | undefined;
-              const t = row['targetidx'] as number | undefined;
-              const i = row['idx'] as number | undefined; // may exist in recent builds
-              const touchesSel = (typeof s === 'number' && nodeIdxSet.has(s)) ||
-                                 (typeof t === 'number' && nodeIdxSet.has(t));
-              const explicitlySel = (typeof i === 'number') && selectedEdgeIdxs.has(i);
-              return (touchesSel || explicitlySel) ? 'rgba(255, 255, 255, 1)' : 'rgba(96, 96, 96, 0.2)';
-            }
-          : undefined,
-      });
+    if (selectedCluster != null) {
+      // Cluster selected → highlight it, dim others, show only selected labels
+      const selColor = clusterColorMap.get(selectedCluster) ?? '#ffffff';
+      return {
+        ...cfg,
+        pointColorBy: loaded.clusterField,
+        pointColorStrategy: undefined,
+        pointColorByFn: (value: any) =>
+          String(value ?? '') === selectedCluster ? selColor : DIM_COLOR,
+        // Disable auto label placement, show only selected cluster's labels
+        showLabels: true,
+        showDynamicLabels: false,
+        showTopLabels: false,
+        showLabelsFor: selectedPointIds,
+      };
     }
-    applySelections();
-  }, [loaded, selNodes, selEdges]);
+
+    if (!clusterOn) return cfg; // clustering toggled off, no custom coloring
+
+    // No selection, clustering on → use our own color map so panel dots match exactly
+    return {
+      ...cfg,
+      pointColorStrategy: undefined,
+      pointColorByFn: (value: any) =>
+        clusterColorMap.get(String(value ?? '')) ?? UNKNOWN_COLOR,
+    };
+  }, [cfg, loaded, selectedCluster, clusterColorMap, clusterOn, selectedPointIds]);
+
+  // Imperative selectPoints for Cosmograph's internal selection state
+  useEffect(() => {
+    const inst = cosmoRef.current;
+    if (!inst || !loaded) return;
+
+    if (selectedCluster == null) {
+      inst.selectPoints(null);
+      return;
+    }
+
+    const group = loaded.clusterGroups.get(selectedCluster);
+    if (!group) return;
+
+    // Use getPointIndicesByIds for robust index mapping
+    const pointIds = group.indices
+      .map(i => loaded.raw.points[i]?.id)
+      .filter((id: any): id is string => id != null)
+      .map(String);
+
+    inst.getPointIndicesByIds(pointIds).then((indices: number[] | undefined) => {
+      if (indices && indices.length > 0) inst.selectPoints(indices);
+    });
+  }, [loaded, selectedCluster]);
+
+  const handleClusterClick = useCallback((clusterValue: string) => {
+    setSelectedCluster(prev => prev === clusterValue ? null : clusterValue);
+  }, []);
 
   return (
     <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column' }}>
@@ -152,7 +204,7 @@ export default function App() {
           fontSize: 14,
         }}
       >
-        <strong>Cosmograph Smoke</strong>
+        <strong>Traverse</strong>
         <span style={{ color: '#666' }}>{status}</span>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <input
@@ -162,13 +214,23 @@ export default function App() {
           />
           Show labels
         </label>
+        {loaded?.hasCluster && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={clusterOn}
+              onChange={(e) => setClusterOn(e.currentTarget.checked)}
+            />
+            Cluster by {loaded.clusterField}
+          </label>
+        )}
       </header>
 
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-        {cfg ? (
+        {finalCfg ? (
           <CosmographProvider>
             <Cosmograph
-              {...(cfg as any)}
+              {...(finalCfg as any)}
               onReady={(inst: CosmographInstance) => { cosmoRef.current = inst; }}
             />
             {hasTimeline && (
@@ -206,6 +268,47 @@ export default function App() {
                 }}
               >
                 Timeline: disabled (no time fields detected)
+              </div>
+            )}
+
+            {/* Community selector panel */}
+            {loaded?.hasCluster && loaded.clusterGroups.size > 0 && (
+              <div className={`community-panel ${panelOpen ? 'open' : 'collapsed'}`}>
+                <button
+                  className="community-panel-toggle"
+                  onClick={() => setPanelOpen(p => !p)}
+                  title={panelOpen ? 'Collapse panel' : 'Show communities'}
+                >
+                  {panelOpen ? '▶' : '◀'} Communities
+                </button>
+                {panelOpen && (
+                  <div className="community-panel-body">
+                    {selectedCluster != null && (
+                      <button
+                        className="community-clear-btn"
+                        onClick={() => setSelectedCluster(null)}
+                      >
+                        Clear selection
+                      </button>
+                    )}
+                    <ul className="community-list">
+                      {[...loaded.clusterGroups.entries()].map(([value, group]) => (
+                        <li
+                          key={value}
+                          className={`community-row ${selectedCluster === value ? 'selected' : ''}`}
+                          onClick={() => handleClusterClick(value)}
+                        >
+                          <span
+                            className="community-dot"
+                            style={{ background: clusterColorMap?.get(value) ?? UNKNOWN_COLOR }}
+                          />
+                          <span className="community-label">{value}</span>
+                          <span className="community-count">{group.count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
           </CosmographProvider>

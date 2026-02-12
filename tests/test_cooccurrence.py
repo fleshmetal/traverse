@@ -105,3 +105,43 @@ def test_reset() -> None:
     assert result["points"] == []
     assert result["links"] == []
     assert b.stats["rows_seen"] == 0
+
+
+def test_category_tracking() -> None:
+    b = CooccurrenceBuilder(min_cooccurrence=1)
+    b.add(["rock", "pop"], tag_categories={"rock": "genre", "pop": "genre"})
+    result = b.build()
+    cats = {p["id"]: p["category"] for p in result["points"]}
+    assert cats["rock"] == "genre"
+    assert cats["pop"] == "genre"
+
+
+def test_category_majority_vote() -> None:
+    b = CooccurrenceBuilder(min_cooccurrence=1)
+    # "rock" seen as genre 3x, style 1x => genre wins
+    b.add(["rock", "pop"], tag_categories={"rock": "genre", "pop": "style"})
+    b.add(["rock", "pop"], tag_categories={"rock": "genre", "pop": "style"})
+    b.add(["rock", "pop"], tag_categories={"rock": "genre", "pop": "style"})
+    b.add(["rock", "pop"], tag_categories={"rock": "style", "pop": "genre"})
+    result = b.build()
+    cats = {p["id"]: p["category"] for p in result["points"]}
+    assert cats["rock"] == "genre"
+    assert cats["pop"] == "style"
+
+
+def test_no_categories_means_no_category_field() -> None:
+    b = CooccurrenceBuilder(min_cooccurrence=1)
+    b.add(["rock", "pop"])
+    result = b.build()
+    for pt in result["points"]:
+        assert "category" not in pt
+
+
+def test_reset_clears_categories() -> None:
+    b = CooccurrenceBuilder(min_cooccurrence=1)
+    b.add(["rock", "pop"], tag_categories={"rock": "genre", "pop": "style"})
+    b.reset()
+    b.add(["rock", "pop"])
+    result = b.build()
+    for pt in result["points"]:
+        assert "category" not in pt
