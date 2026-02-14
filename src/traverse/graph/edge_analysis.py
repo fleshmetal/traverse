@@ -10,6 +10,7 @@ Supported algorithms:
   electrical current flow / random walks.
 - **Bridge detection** — edges whose removal disconnects components.
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -38,10 +39,7 @@ def subgraph_from_nodes(
     nodes and edges whose *both* endpoints are in the set.
     """
     points = [p for p in graph["points"] if p["id"] in node_ids]
-    links = [
-        lk for lk in graph["links"]
-        if lk["source"] in node_ids and lk["target"] in node_ids
-    ]
+    links = [lk for lk in graph["links"] if lk["source"] in node_ids and lk["target"] in node_ids]
     return CooccurrenceGraph(points=points, links=links)
 
 
@@ -85,15 +83,16 @@ def analyze_edges(
     """
     if algorithm == EdgeAlgorithm.EDGE_BETWEENNESS:
         scores = nx.edge_betweenness_centrality(
-            G, weight="weight", normalized=normalized,
+            G,
+            weight="weight",
+            normalized=normalized,
         )
     elif algorithm == EdgeAlgorithm.CURRENT_FLOW_BETWEENNESS:
         try:
             import scipy  # noqa: F401  — required by NetworkX for this algorithm
         except ImportError:
             raise ImportError(
-                "Current-flow betweenness requires scipy. "
-                "Install it with: pip install scipy"
+                "Current-flow betweenness requires scipy. Install it with: pip install scipy"
             )
         if not nx.is_connected(G):
             # Current-flow requires a connected graph.  Score each
@@ -104,12 +103,16 @@ def analyze_edges(
                     continue
                 sub = G.subgraph(comp_nodes)
                 comp_scores = nx.edge_current_flow_betweenness_centrality(
-                    sub, weight="weight", normalized=normalized,
+                    sub,
+                    weight="weight",
+                    normalized=normalized,
                 )
                 scores.update(comp_scores)
         else:
             scores = nx.edge_current_flow_betweenness_centrality(
-                G, weight="weight", normalized=normalized,
+                G,
+                weight="weight",
+                normalized=normalized,
             )
     elif algorithm == EdgeAlgorithm.BRIDGES:
         bridge_set = set(nx.bridges(G))

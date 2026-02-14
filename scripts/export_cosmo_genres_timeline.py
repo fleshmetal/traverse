@@ -26,10 +26,14 @@ from traverse.processing.normalize import split_genres_styles  # noqa: E402
 
 # --- Helpers ------------------------------------------------------------------
 
+
 def _status(msg: str) -> None:
     print(msg, file=sys.stderr)
 
-def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) -> Dict[str, pd.DataFrame]:
+
+def _load_spotify_extended_minimal(
+    extended_dir: Path, progress: bool = True
+) -> Dict[str, pd.DataFrame]:
     from glob import glob
     import gzip
     import io
@@ -50,6 +54,7 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
     if progress:
         try:
             from tqdm import tqdm
+
             it = tqdm(files, desc="Reading Extended JSON", unit="file")
         except Exception:
             it = files
@@ -76,7 +81,9 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
                 track_id = "trk:" + track_uri.split(":")[-1]
             if not track_id:
                 if track_name and artist_name:
-                    track_id = f"nk:{str(artist_name).strip().lower()}||{str(track_name).strip().lower()}"
+                    track_id = (
+                        f"nk:{str(artist_name).strip().lower()}||{str(track_name).strip().lower()}"
+                    )
                 else:
                     track_id = None
 
@@ -99,9 +106,7 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
         plays = plays.dropna(subset=["played_at", "track_id"]).reset_index(drop=True)
 
     tracks = (
-        plays[["track_id", "track_name", "artist_name"]]
-        .drop_duplicates()
-        .reset_index(drop=True)
+        plays[["track_id", "track_name", "artist_name"]].drop_duplicates().reset_index(drop=True)
     )
     artists = (
         tracks[["artist_name"]]
@@ -114,6 +119,7 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
     artists = artists[["artist_id", "name"]]
 
     return {"plays": plays, "tracks": tracks, "artists": artists}
+
 
 def _ensure_canonical(
     extended_dir: Path,
@@ -162,17 +168,21 @@ def _ensure_canonical(
 
     return plays_wide, tracks_wide
 
+
 def _cooccurrence_pairs(tags: Iterable[str]) -> Iterable[Tuple[str, str]]:
     uniq = sorted(set(t for t in tags if t))
     if len(uniq) < 2:
         return []
     return combinations(uniq, 2)
 
+
 def _pretty_label(t: str) -> str:
     title = t.title()
     return title.replace("Idm", "IDM").replace("Edm", "EDM").replace("Dnb", "DnB")
 
+
 # --- Main ---------------------------------------------------------------------
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -185,7 +195,9 @@ def main() -> None:
     ap.add_argument("--max-edges", type=int, default=40_000, help="0 = no cap")
     ap.add_argument("--max-nodes", type=int, default=5_000, help="0 = no cap")
     ap.add_argument("--cache-dir", default="_out")
-    ap.add_argument("--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_timeline.json")
+    ap.add_argument(
+        "--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_timeline.json"
+    )
     ap.add_argument("--progress", action="store_true")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
@@ -206,7 +218,11 @@ def main() -> None:
     )
 
     # Ensure tags available on plays_wide; join from tracks_wide if needed.
-    if "genres" not in plays_wide.columns and "genres" in tracks_wide.columns and "track_id" in plays_wide.columns:
+    if (
+        "genres" not in plays_wide.columns
+        and "genres" in tracks_wide.columns
+        and "track_id" in plays_wide.columns
+    ):
         tag_cols = [c for c in ("track_id", "genres", "styles") if c in tracks_wide.columns]
         if len(tag_cols) >= 2:
             plays_wide = plays_wide.merge(tracks_wide[tag_cols], on="track_id", how="left")
@@ -281,7 +297,12 @@ def main() -> None:
         strength[b] += w
 
     if args.max_nodes and args.max_nodes > 0:
-        top = {n for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[: args.max_nodes]}
+        top = {
+            n
+            for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[
+                : args.max_nodes
+            ]
+        }
         edges = [(a, b, w) for a, b, w in edges if a in top and b in top]
 
     if args.max_edges and args.max_edges > 0 and len(edges) > args.max_edges:
@@ -310,7 +331,9 @@ def main() -> None:
                 "source": a,
                 "target": b,
                 "weight": int(w),
-                "first_seen": int(first_link_time.get((a, b), 0)) if (a, b) in first_link_time else None,
+                "first_seen": int(first_link_time.get((a, b), 0))
+                if (a, b) in first_link_time
+                else None,
             }
         )
 
@@ -322,6 +345,7 @@ def main() -> None:
     out = {"points": points, "links": links}
     out_json.write_text(json.dumps(out, indent=2))
     print(f"✔ Wrote {out_json}  (nodes={len(points)}, edges={len(links)})")
+
 
 if __name__ == "__main__":
     main()

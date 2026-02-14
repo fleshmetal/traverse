@@ -3,6 +3,7 @@
 Serves the pre-built ``dist/`` directory from the embedded React app.
 Includes ``POST /api/cluster`` and ``POST /api/genre-tracks`` endpoints.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,6 +49,7 @@ def _load_canonical_plays() -> Optional[pd.DataFrame]:
 
     _canonical_plays_loaded = True
     return _canonical_plays
+
 
 # Hardcoded MIME map — Windows registry often maps .js to text/plain,
 # which makes browsers reject ES module scripts.
@@ -166,10 +168,13 @@ class _CORSHandler(SimpleHTTPRequestHandler):
             return
 
         num_communities = len(set(assignments.values())) if assignments else 0
-        self._json_response(200, {
-            "assignments": assignments,
-            "numCommunities": num_communities,
-        })
+        self._json_response(
+            200,
+            {
+                "assignments": assignments,
+                "numCommunities": num_communities,
+            },
+        )
 
     # ── POST /api/edge-analysis ──────────────────────────────────────
     def _handle_edge_analysis(self) -> None:
@@ -231,11 +236,14 @@ class _CORSHandler(SimpleHTTPRequestHandler):
             self._json_error(500, f"Edge analysis failed: {exc}")
             return
 
-        self._json_response(200, {
-            "algorithm": algo_name,
-            "edgeCount": len(results),
-            "edges": results,
-        })
+        self._json_response(
+            200,
+            {
+                "algorithm": algo_name,
+                "edgeCount": len(results),
+                "edges": results,
+            },
+        )
 
     # ── POST /api/genre-tracks ───────────────────────────────────────
     def _handle_genre_tracks(self) -> None:
@@ -255,8 +263,7 @@ class _CORSHandler(SimpleHTTPRequestHandler):
         if df is None:
             self._json_error(
                 404,
-                "No canonical plays data found in _out/. "
-                "Run a canonical table export first.",
+                "No canonical plays data found in _out/. Run a canonical table export first.",
             )
             return
 
@@ -275,11 +282,14 @@ class _CORSHandler(SimpleHTTPRequestHandler):
 
         matched = df[mask]
         if matched.empty:
-            self._json_response(200, {
-                "genre": genre,
-                "totalPlays": 0,
-                "tracks": [],
-            })
+            self._json_response(
+                200,
+                {
+                    "genre": genre,
+                    "totalPlays": 0,
+                    "tracks": [],
+                },
+            )
             return
 
         # Group by track, count plays, sum ms_played
@@ -290,11 +300,20 @@ class _CORSHandler(SimpleHTTPRequestHandler):
         if not group_cols:
             group_cols = ["track_name"]
 
-        grouped = matched.groupby(group_cols, dropna=False).agg(**{
-            "playCount": pd.NamedAgg(column=group_cols[0], aggfunc="count"),
-            **({"totalMs": pd.NamedAgg(column="ms_played", aggfunc="sum")}
-               if "ms_played" in matched.columns else {}),
-        }).reset_index()
+        grouped = (
+            matched.groupby(group_cols, dropna=False)
+            .agg(
+                **{
+                    "playCount": pd.NamedAgg(column=group_cols[0], aggfunc="count"),
+                    **(
+                        {"totalMs": pd.NamedAgg(column="ms_played", aggfunc="sum")}
+                        if "ms_played" in matched.columns
+                        else {}
+                    ),
+                }
+            )
+            .reset_index()
+        )
 
         grouped = grouped.sort_values("playCount", ascending=False).head(200)
 
@@ -309,11 +328,14 @@ class _CORSHandler(SimpleHTTPRequestHandler):
                 t["totalMs"] = int(row["totalMs"])
             tracks.append(t)
 
-        self._json_response(200, {
-            "genre": genre,
-            "totalPlays": int(grouped["playCount"].sum()),
-            "tracks": tracks,
-        })
+        self._json_response(
+            200,
+            {
+                "genre": genre,
+                "totalPlays": int(grouped["playCount"].sum()),
+                "tracks": tracks,
+            },
+        )
 
     # ── helpers ──────────────────────────────────────────────────────
     def _json_response(self, code: int, data: Any) -> None:

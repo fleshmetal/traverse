@@ -3,6 +3,7 @@
 Consolidates the ``_build_or_load_canonicals`` logic duplicated across export
 scripts into a reusable utility.
 """
+
 from __future__ import annotations
 
 import sys

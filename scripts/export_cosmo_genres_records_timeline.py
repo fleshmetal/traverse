@@ -22,11 +22,12 @@ except Exception:
 
 SEP_RE = re.compile(r"[|,;/]+")
 
+
 def _fallback_split(val: object) -> List[str]:
     if val is None:
         return []
     s = str(val).strip()
-    if not s or s.lower() in {"na","nan","none"}:
+    if not s or s.lower() in {"na", "nan", "none"}:
         return []
     if s.startswith("[") and s.endswith("]"):
         try:
@@ -36,13 +37,17 @@ def _fallback_split(val: object) -> List[str]:
             pass
     return [p.strip() for p in SEP_RE.split(s) if p.strip()]
 
+
 TRIM = re.compile(r"^[\s'\"`~!@#$%^*_=+<>?.,:;\\/\-\|&]+|[\s'\"`~!@#$%^*_=+<>?.,:;\\/\-\|&]+$")
+
+
 def clean_tag(tag: str) -> Optional[str]:
     t = TRIM.sub("", str(tag)).lower()
     t = re.sub(r"\s+", " ", t).strip()
     if not t or not re.search(r"[a-z]", t):
         return None
     return t
+
 
 def split_tags(val: object) -> List[str]:
     try:
@@ -56,16 +61,21 @@ def split_tags(val: object) -> List[str]:
             out.append(ct)
     return out
 
-def pretty_label(tag: str) -> str:
-    return tag.title().replace("Idm","IDM").replace("Edm","EDM").replace("Dnb","DnB")
 
-def cooccurrence_pairs(tags: Iterable[str]) -> Iterable[Tuple[str,str]]:
+def pretty_label(tag: str) -> str:
+    return tag.title().replace("Idm", "IDM").replace("Edm", "EDM").replace("Dnb", "DnB")
+
+
+def cooccurrence_pairs(tags: Iterable[str]) -> Iterable[Tuple[str, str]]:
     uniq = sorted(set(t for t in tags if t))
     if len(uniq) < 2:
         return []
     return combinations(uniq, 2)
 
+
 YR4 = re.compile(r"(?:^|[^0-9])(\d{4})(?:[^0-9]|$)")
+
+
 def parse_year_cell(v: object) -> Optional[int]:
     if v is None:
         return None
@@ -83,16 +93,20 @@ def parse_year_cell(v: object) -> Optional[int]:
             return y
     return None
 
-def detect_column(colmap: Dict[str,str], *candidates: str) -> Optional[str]:
+
+def detect_column(colmap: Dict[str, str], *candidates: str) -> Optional[str]:
     for c in candidates:
         if c in colmap:
             return colmap[c]
     return None
 
+
 def status(msg: str) -> None:
     print(msg, file=sys.stderr)
 
+
 # ----------------- main -----------------
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -106,7 +120,9 @@ def main() -> None:
     ap.add_argument("--min-cooccurrence", type=int, default=2)
     ap.add_argument("--max-edges", type=int, default=40_000, help="0 = no cap")
     ap.add_argument("--max-nodes", type=int, default=5_000, help="0 = no cap")
-    ap.add_argument("--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_records_timeline.json")
+    ap.add_argument(
+        "--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_records_timeline.json"
+    )
     ap.add_argument("--progress", action="store_true")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
@@ -133,10 +149,10 @@ def main() -> None:
             return None
         return int(datetime.datetime(y, 1, 1, tzinfo=datetime.timezone.utc).timestamp() * 1000)
 
-    counts: Counter[Tuple[str,str]] = Counter()
-    edge_first_year: Dict[Tuple[str,str], int] = {}
-    point_first_year: Dict[str,int] = {}
-    first_label: Dict[str,str] = {}
+    counts: Counter[Tuple[str, str]] = Counter()
+    edge_first_year: Dict[Tuple[str, str], int] = {}
+    point_first_year: Dict[str, int] = {}
+    first_label: Dict[str, str] = {}
 
     total_rows = 0
     tagged_rows = 0
@@ -147,10 +163,13 @@ def main() -> None:
     clamped_dropped = 0
 
     def _chunks():
-        reader = pd.read_csv(rec_path, chunksize=args.chunksize, dtype="string", keep_default_na=True, na_filter=True)
+        reader = pd.read_csv(
+            rec_path, chunksize=args.chunksize, dtype="string", keep_default_na=True, na_filter=True
+        )
         if args.progress:
             try:
                 from tqdm import tqdm
+
                 return tqdm(reader, desc="Reading records (chunks)", unit="chunk")
             except Exception:
                 return reader
@@ -160,16 +179,26 @@ def main() -> None:
         total_rows += len(chunk)
         colmap = {c.lower(): c for c in chunk.columns}
 
-        gcol = detect_column(colmap, "genres","genre")
-        scol = detect_column(colmap, "styles","style")
+        gcol = detect_column(colmap, "genres", "genre")
+        scol = detect_column(colmap, "styles", "style")
         if not gcol and not scol:
             raise KeyError(f"Missing genres/styles columns. Available: {list(chunk.columns)}")
 
         ykey = args.year_col.strip().lower()
         if ykey not in colmap:
-            ykey = detect_column(colmap, "release_year","year","releaseyear","released_year","release year","released")
+            ykey = detect_column(
+                colmap,
+                "release_year",
+                "year",
+                "releaseyear",
+                "released_year",
+                "release year",
+                "released",
+            )
         if not ykey:
-            raise KeyError(f"Year column not found. Tried '{args.year_col}' and common variants. Available: {list(chunk.columns)}")
+            raise KeyError(
+                f"Year column not found. Tried '{args.year_col}' and common variants. Available: {list(chunk.columns)}"
+            )
 
         gs = chunk[gcol] if gcol else pd.Series([], dtype="string")
         ss = chunk[scol] if scol else pd.Series([], dtype="string")
@@ -229,23 +258,28 @@ def main() -> None:
         return
 
     # threshold + caps
-    edges = [(a,b,w) for (a,b),w in counts.items() if w >= args.min_cooccurrence]
+    edges = [(a, b, w) for (a, b), w in counts.items() if w >= args.min_cooccurrence]
     edges.sort(key=lambda x: x[2], reverse=True)
 
     strength = defaultdict(int)
-    for a,b,w in edges:
+    for a, b, w in edges:
         strength[a] += w
         strength[b] += w
 
     if args.max_nodes and args.max_nodes > 0:
-        keep = {n for n,_ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[:args.max_nodes]}
-        edges = [(a,b,w) for a,b,w in edges if a in keep and b in keep]
+        keep = {
+            n
+            for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[
+                : args.max_nodes
+            ]
+        }
+        edges = [(a, b, w) for a, b, w in edges if a in keep and b in keep]
 
     if args.max_edges and args.max_edges > 0 and len(edges) > args.max_edges:
-        edges = edges[:args.max_edges]
+        edges = edges[: args.max_edges]
 
     node_ids = set()
-    for a,b,_ in edges:
+    for a, b, _ in edges:
         node_ids.add(a)
         node_ids.add(b)
 
@@ -264,23 +298,30 @@ def main() -> None:
     # links (strict validation)
     links = []
     lks_with_time = 0
-    skipped = {"empty_source":0,"empty_target":0,"non_str_source":0,"non_str_target":0,"not_in_points":0}
+    skipped = {
+        "empty_source": 0,
+        "empty_target": 0,
+        "non_str_source": 0,
+        "non_str_target": 0,
+        "not_in_points": 0,
+    }
     pset = {p["id"] for p in points}
 
-    def _ok(s): return isinstance(s, str) and len(s) > 0
+    def _ok(s):
+        return isinstance(s, str) and len(s) > 0
 
-    for a,b,w in edges:
+    for a, b, w in edges:
         if not _ok(a):
-            skipped["non_str_source" if not isinstance(a,str) else "empty_source"] += 1
+            skipped["non_str_source" if not isinstance(a, str) else "empty_source"] += 1
             continue
         if not _ok(b):
-            skipped["non_str_target" if not isinstance(b,str) else "empty_target"] += 1
+            skipped["non_str_target" if not isinstance(b, str) else "empty_target"] += 1
             continue
         if (a not in pset) or (b not in pset):
             skipped["not_in_points"] += 1
             continue
         lk = {"source": a, "target": b, "weight": int(w)}
-        fy = edge_first_year.get((a,b))
+        fy = edge_first_year.get((a, b))
         if fy is not None:
             lk["first_seen"] = int(fy)
             lk["first_seen_ts"] = year_to_ts(fy)
@@ -299,6 +340,7 @@ def main() -> None:
     out = {"points": points, "links": links}
     out_path.write_text(json.dumps(out, indent=2))
     print(f"✔ Wrote {out_path}  (nodes={len(points)}, edges={len(links)})")
+
 
 if __name__ == "__main__":
     main()

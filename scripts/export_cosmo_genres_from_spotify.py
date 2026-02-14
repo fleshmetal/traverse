@@ -27,10 +27,14 @@ from traverse.processing.normalize import split_genres_styles  # noqa: E402
 
 # --- Helpers ------------------------------------------------------------------
 
+
 def _status(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
-def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) -> Dict[str, pd.DataFrame]:
+
+def _load_spotify_extended_minimal(
+    extended_dir: Path, progress: bool = True
+) -> Dict[str, pd.DataFrame]:
     """
     Minimal, robust loader for Spotify Extended Streaming History directory.
     Produces tables: plays, tracks, artists (deduped from plays).
@@ -58,6 +62,7 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
     if progress:
         try:
             from tqdm import tqdm
+
             it = tqdm(files, desc="Reading Extended JSON", unit="file")
         except Exception:
             it = files
@@ -88,7 +93,9 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
             # Fallback: build a name-key if no ID
             if not track_id:
                 if track_name and artist_name:
-                    track_id = f"nk:{str(artist_name).strip().lower()}||{str(track_name).strip().lower()}"
+                    track_id = (
+                        f"nk:{str(artist_name).strip().lower()}||{str(track_name).strip().lower()}"
+                    )
                 else:
                     track_id = None
 
@@ -111,9 +118,7 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
         plays = plays.dropna(subset=["played_at", "track_id"]).reset_index(drop=True)
 
     tracks = (
-        plays[["track_id", "track_name", "artist_name"]]
-        .drop_duplicates()
-        .reset_index(drop=True)
+        plays[["track_id", "track_name", "artist_name"]].drop_duplicates().reset_index(drop=True)
     )
     artists = (
         tracks[["artist_name"]]
@@ -126,6 +131,7 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
     artists = artists[["artist_id", "name"]]
 
     return {"plays": plays, "tracks": tracks, "artists": artists}
+
 
 def _ensure_canonical(
     extended_dir: Path,
@@ -194,21 +200,25 @@ def _ensure_canonical(
 
     return plays_wide, tracks_wide
 
+
 def _cooccurrence_pairs(tags: Iterable[str]) -> Iterable[Tuple[str, str]]:
     uniq = sorted(set(t for t in tags if t))
     if len(uniq) < 2:
         return []
     return combinations(uniq, 2)
 
+
 def _pretty_label(t: str) -> str:
     title = t.title()
     return title.replace("Idm", "IDM").replace("Edm", "EDM").replace("Dnb", "DnB")
+
 
 def _extract_tags_from_row(genres_val: object, styles_val: object) -> List[str]:
     tags: List[str] = []
     tags.extend(split_genres_styles(genres_val))
     tags.extend(split_genres_styles(styles_val))
     return tags
+
 
 def _to_epoch_ms(ts_val: object) -> Optional[int]:
     if ts_val is None:
@@ -221,19 +231,25 @@ def _to_epoch_ms(ts_val: object) -> Optional[int]:
     except Exception:
         return None
 
+
 # --- Main ---------------------------------------------------------------------
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Spotify Extended → (Enrich) → Canonical → Genre/style co-occurrence with timeline → Cosmograph JSON."
     )
-    ap.add_argument("--extended-dir", required=True, help="Directory of ExtendedStreamingHistory JSON files")
+    ap.add_argument(
+        "--extended-dir", required=True, help="Directory of ExtendedStreamingHistory JSON files"
+    )
     ap.add_argument("--records-csv", help="records.csv (for enrichment); optional but recommended")
     ap.add_argument("--chunksize", type=int, default=200_000)
     ap.add_argument("--min-cooccurrence", type=int, default=2)
     ap.add_argument("--max-edges", type=int, default=40_000, help="0 = no cap")
     ap.add_argument("--max-nodes", type=int, default=5_000, help="0 = no cap")
-    ap.add_argument("--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_spotify.json")
+    ap.add_argument(
+        "--out-json", default="src/traverse/cosmograph/app/dist/cosmo_genres_spotify.json"
+    )
     ap.add_argument("--cache-dir", default="_out", help="Where canonical_* are cached/loaded")
     ap.add_argument("--progress", action="store_true")
     ap.add_argument("--force", action="store_true", help="Rebuild canonicals even if cache exists")
@@ -261,13 +277,19 @@ def main() -> None:
     if gcol is None and "genres" in tracks_wide.columns:
         _status("ℹ No 'genres' on plays_wide; merging from tracks_wide by track_id.")
         tag_cols = [c for c in ("track_id", "genres", "styles") if c in tracks_wide.columns]
-        if "track_id" in plays_wide.columns and "track_id" in tracks_wide.columns and len(tag_cols) >= 2:
+        if (
+            "track_id" in plays_wide.columns
+            and "track_id" in tracks_wide.columns
+            and len(tag_cols) >= 2
+        ):
             plays_wide = plays_wide.merge(tracks_wide[tag_cols], on="track_id", how="left")
             gcol = "genres" if "genres" in plays_wide.columns else None
             scol = "styles" if "styles" in plays_wide.columns else None
 
     if gcol is None and scol is None:
-        raise RuntimeError("No 'genres'/'styles' columns found after canonical build. Enrichment likely missing.")
+        raise RuntimeError(
+            "No 'genres'/'styles' columns found after canonical build. Enrichment likely missing."
+        )
 
     if "played_at" not in plays_wide.columns:
         raise RuntimeError("'played_at' not present in canonical plays_wide.")
@@ -287,7 +309,11 @@ def main() -> None:
         n_rows += 1
         played_at = row[0]
         gval = row[1] if gcol else None
-        sval = row[2] if (gcol and scol and len(row) > 2) else (row[1] if (not gcol and scol) else None)
+        sval = (
+            row[2]
+            if (gcol and scol and len(row) > 2)
+            else (row[1] if (not gcol and scol) else None)
+        )
 
         ts_ms = _to_epoch_ms(played_at)
         tags = _extract_tags_from_row(gval, sval)
@@ -331,7 +357,12 @@ def main() -> None:
         strength[b] += w
 
     if args.max_nodes and args.max_nodes > 0:
-        top = {n for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[: args.max_nodes]}
+        top = {
+            n
+            for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[
+                : args.max_nodes
+            ]
+        }
         edges = [(a, b, w) for a, b, w in edges if a in top and b in top]
 
     if args.max_edges and args.max_edges > 0 and len(edges) > args.max_edges:
@@ -373,6 +404,7 @@ def main() -> None:
     out = {"points": points, "links": links}
     out_json.write_text(json.dumps(out, indent=2))
     print(f"✔ Wrote {out_json}  (nodes={len(points)}, edges={len(links)})")
+
 
 if __name__ == "__main__":
     main()

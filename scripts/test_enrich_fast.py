@@ -129,9 +129,11 @@ def main(
                         wide_csv[col] = (
                             wide_csv[col]
                             .apply(
-                                lambda v: " | ".join(v)
-                                if isinstance(v, list)
-                                else (str(v) if pd.notna(v) else "")
+                                lambda v: (
+                                    " | ".join(v)
+                                    if isinstance(v, list)
+                                    else (str(v) if pd.notna(v) else "")
+                                )
                             )
                             .astype("string")
                         )
@@ -141,9 +143,7 @@ def main(
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(
-        description="Test: fast streaming enrichment (Records → Extended)"
-    )
+    p = argparse.ArgumentParser(description="Test: fast streaming enrichment (Records → Extended)")
     p.add_argument("--extended-dir", required=True)
     p.add_argument("--records-csv", required=True)
     p.add_argument("--explode", action="store_true")

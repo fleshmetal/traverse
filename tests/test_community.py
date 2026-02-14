@@ -104,7 +104,9 @@ class TestDetectCommunities:
     ) -> None:
         G = cooccurrence_to_networkx(two_cluster_graph)
         assignments = detect_communities(
-            G, CommunityAlgorithm.LABEL_PROPAGATION, seed=42,
+            G,
+            CommunityAlgorithm.LABEL_PROPAGATION,
+            seed=42,
         )
         assert len(assignments) == 6
         assert assignments["a"] == assignments["b"] == assignments["c"]
@@ -124,10 +126,16 @@ class TestDetectCommunities:
     def test_louvain_resolution(self, two_cluster_graph: CooccurrenceGraph) -> None:
         G = cooccurrence_to_networkx(two_cluster_graph)
         low_res = detect_communities(
-            G, CommunityAlgorithm.LOUVAIN, resolution=0.1, seed=42,
+            G,
+            CommunityAlgorithm.LOUVAIN,
+            resolution=0.1,
+            seed=42,
         )
         high_res = detect_communities(
-            G, CommunityAlgorithm.LOUVAIN, resolution=10.0, seed=42,
+            G,
+            CommunityAlgorithm.LOUVAIN,
+            resolution=10.0,
+            seed=42,
         )
         # Higher resolution should produce >= as many communities
         assert max(high_res.values()) >= max(low_res.values())
@@ -135,14 +143,14 @@ class TestDetectCommunities:
     def test_greedy_modularity_best_n(self, two_cluster_graph: CooccurrenceGraph) -> None:
         G = cooccurrence_to_networkx(two_cluster_graph)
         assignments = detect_communities(
-            G, CommunityAlgorithm.GREEDY_MODULARITY, best_n=2,
+            G,
+            CommunityAlgorithm.GREEDY_MODULARITY,
+            best_n=2,
         )
         n_communities = len(set(assignments.values()))
         assert n_communities == 2
 
-    def test_kernighan_lin_finds_two_clusters(
-        self, two_cluster_graph: CooccurrenceGraph
-    ) -> None:
+    def test_kernighan_lin_finds_two_clusters(self, two_cluster_graph: CooccurrenceGraph) -> None:
         G = cooccurrence_to_networkx(two_cluster_graph)
         assignments = detect_communities(G, CommunityAlgorithm.KERNIGHAN_LIN, seed=42)
         assert len(assignments) == 6
@@ -164,13 +172,13 @@ class TestDetectCommunities:
         G = cooccurrence_to_networkx(two_cluster_graph)
         # best_n=2 means take 2nd split → up to 3 communities
         assignments = detect_communities(
-            G, CommunityAlgorithm.EDGE_BETWEENNESS, best_n=2,
+            G,
+            CommunityAlgorithm.EDGE_BETWEENNESS,
+            best_n=2,
         )
         assert len(set(assignments.values())) >= 2
 
-    def test_k_clique_finds_two_clusters(
-        self, two_cluster_graph: CooccurrenceGraph
-    ) -> None:
+    def test_k_clique_finds_two_clusters(self, two_cluster_graph: CooccurrenceGraph) -> None:
         G = cooccurrence_to_networkx(two_cluster_graph)
         # k=3: each triangle is a 3-clique, the two cliques are disjoint
         assignments = detect_communities(G, CommunityAlgorithm.K_CLIQUE, k=3)
@@ -227,7 +235,9 @@ class TestApplyCommunities:
 class TestAddCommunities:
     def test_end_to_end(self, two_cluster_graph: CooccurrenceGraph) -> None:
         result = add_communities(
-            two_cluster_graph, CommunityAlgorithm.LOUVAIN, seed=42,
+            two_cluster_graph,
+            CommunityAlgorithm.LOUVAIN,
+            seed=42,
         )
         communities = {pt["id"]: pt["community"] for pt in result["points"]}
         assert communities["a"] == communities["b"] == communities["c"]

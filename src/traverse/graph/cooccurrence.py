@@ -3,6 +3,7 @@
 Consolidates the duplicated co-occurrence logic from scripts/export_cosmo_*.py
 into a reusable core module.
 """
+
 from __future__ import annotations
 
 from collections import Counter, defaultdict
