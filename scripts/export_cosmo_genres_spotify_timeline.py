@@ -1,5 +1,8 @@
 from __future__ import annotations
-import argparse, json, sys, re
+import argparse
+import json
+import sys
+import re
 from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
@@ -95,7 +98,9 @@ except Exception:
 # -------------------- Spotify Extended loader ------------------------
 def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) -> Dict[str, pd.DataFrame]:
     from glob import glob
-    import gzip, io, json as _json
+    import gzip
+    import io
+    import json as _json
 
     pats = [
         str(extended_dir / "Streaming_History_Audio*.json"),
@@ -243,12 +248,8 @@ def _records_namekey_enrichment(
         return plays_wide, 0, 0
     tracks["__name_key__"] = tracks.apply(lambda r: _nk(r.get("artist_name"), r.get("track_name")), axis=1)
 
-    # Build initial map frame from tracks for merging onto plays
-    m = tracks[["track_id", "__name_key__"]].copy()
-
     # Scan records.csv to collect (namekey -> genres/styles)
     needed: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
-    matched_nk = 0
 
     reader = pd.read_csv(records_csv, chunksize=chunksize, dtype="string", keep_default_na=False)
     for i, chunk in enumerate(reader, start=1):
@@ -417,7 +418,6 @@ def main() -> None:
     if args.cooccur_on == "plays":
         iter_df = plays_wide[["played_at", "genres", "styles"]].copy()
         iter_df = iter_df.sort_values("played_at", kind="stable").reset_index(drop=True)
-        time_col = "played_at"
     else:
         def _merge_tags(s: pd.Series) -> str:
             bag: Set[str] = set()
@@ -431,7 +431,6 @@ def main() -> None:
         ).reset_index()
         iter_df = tg.rename(columns={"earliest": "played_at"})[["played_at", "genres", "styles"]]
         iter_df = iter_df.sort_values("played_at", kind="stable").reset_index(drop=True)
-        time_col = "played_at"
 
     # 5) Dense timeline + counts
     round_div = 1
@@ -492,7 +491,8 @@ def main() -> None:
     if args.debug:
         parsed_preview = []
         for i, (played_at, gval, sval) in enumerate(iter_df.head(200).itertuples(index=False, name=None)):
-            gg = split_tags(gval); ss = split_tags(sval)
+            gg = split_tags(gval)
+            ss = split_tags(sval)
             parsed_preview.append({
                 "played_at": str(played_at),
                 "genres_raw": gval, "styles_raw": sval,
@@ -526,7 +526,8 @@ def main() -> None:
     # 7) Finalize output
     node_ids: Set[str] = set()
     for a, b, _ in edges:
-        node_ids.add(a); node_ids.add(b)
+        node_ids.add(a)
+        node_ids.add(b)
 
     points = []
     for nid in sorted(node_ids):

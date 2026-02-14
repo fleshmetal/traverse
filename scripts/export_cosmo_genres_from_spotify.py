@@ -21,9 +21,9 @@ except Exception:
     except Exception:
         _Enricher = None  # we'll warn and proceed without enrich
 
-from traverse.processing.tables import BuildCanonicalTables
-from traverse.processing.base import Pipeline
-from traverse.processing.normalize import split_genres_styles  # Week-4 splitter
+from traverse.processing.tables import BuildCanonicalTables  # noqa: E402
+from traverse.processing.base import Pipeline  # noqa: E402
+from traverse.processing.normalize import split_genres_styles  # noqa: E402
 
 # --- Helpers ------------------------------------------------------------------
 

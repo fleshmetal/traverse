@@ -12,6 +12,7 @@ export type LoadedInputs = {
   raw: { points: any[]; links: any[] };
   idToIndex: Map<string, number>;
   edgeToIndex: Map<string, number>;
+  maxWeight: number;
 };
 
 function toEpochMs(v: unknown): number | null {
@@ -133,6 +134,10 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
         ...(lkTime.has ? ['first_seen_ts'] : []),
       ],
       ...(lkTime.has ? { linkTimeBy: 'first_seen_ts' } : {}),
+      ...(links.some(l => typeof l.weight === 'number') ? {
+        linkColorBy: 'weight',
+        linkWidthBy: 'weight',
+      } : {}),
     },
     labels: { enabled: true, maxLabelCount: 10000 },
     timeline: (ptTime.has || lkTime.has) ? { enabled: true } : undefined,
@@ -176,6 +181,9 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
     }
   }
 
+  // Max link weight for color/width normalization
+  const maxWeight = links.reduce((mx, l) => Math.max(mx, typeof l.weight === 'number' ? l.weight : 0), 1);
+
   return {
     prepared,
     hasPointTime: !!ptTime.has,
@@ -186,5 +194,6 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
     raw: { points, links },
     idToIndex,
     edgeToIndex,
+    maxWeight,
   };
 }

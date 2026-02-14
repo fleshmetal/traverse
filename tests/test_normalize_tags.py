@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 import pandas as pd
 
 from traverse.processing.normalize import split_tags, pretty_label
