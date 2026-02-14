@@ -48,13 +48,13 @@ class CooccurrenceBuilder:
     max_edges: int = 0  # 0 = no cap
 
     # Internal accumulators
-    _counts: Counter = field(init=False, repr=False, default_factory=Counter)
+    _counts: Counter[Tuple[str, str]] = field(init=False, repr=False, default_factory=Counter)
     _node_first_seen: Dict[str, int] = field(init=False, repr=False, default_factory=dict)
     _edge_first_seen: Dict[Tuple[str, str], int] = field(
         init=False, repr=False, default_factory=dict
     )
     _node_labels: Dict[str, str] = field(init=False, repr=False, default_factory=dict)
-    _node_categories: Dict[str, Counter] = field(
+    _node_categories: Dict[str, Counter[str]] = field(
         init=False, repr=False, default_factory=lambda: defaultdict(Counter)
     )
     _rows_seen: int = field(init=False, repr=False, default=0)
@@ -64,11 +64,11 @@ class CooccurrenceBuilder:
     # ------------------------------------------------------------------
     def reset(self) -> None:
         """Clear all accumulated state."""
-        self._counts = Counter()
+        self._counts: Counter[Tuple[str, str]] = Counter()
         self._node_first_seen = {}
         self._edge_first_seen = {}
         self._node_labels = {}
-        self._node_categories = defaultdict(Counter)
+        self._node_categories: Dict[str, Counter[str]] = defaultdict(Counter)
         self._rows_seen = 0
         self._rows_with_tags = 0
         self._rows_with_pairs = 0

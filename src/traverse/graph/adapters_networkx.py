@@ -1,7 +1,7 @@
 # --- top of file: replace your import block with this ---
 from __future__ import annotations
 
-from typing import Any, Dict, TypedDict
+from typing import Any, Dict, TypedDict, cast
 
 import pandas as pd
 
@@ -23,7 +23,7 @@ def _ensure_columns(df: pd.DataFrame, spec: Dict[str, Any]) -> pd.DataFrame:
     for col, default in spec.items():
         if col not in out.columns:
             out[col] = default
-    return out
+    return cast(pd.DataFrame, out)
 
 
 def to_networkx(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import pandas as pd
 
@@ -21,7 +21,7 @@ def _split_pipe_series(s: pd.Series, name: str) -> pd.DataFrame:
         return pd.DataFrame(columns=[name])
     parts = df[name].astype("string").str.split("|").explode().str.strip().dropna().to_frame(name)
     parts = parts[parts[name] != ""]
-    return parts.reset_index(drop=True)
+    return cast(pd.DataFrame, parts.reset_index(drop=True))
 
 
 def _ensure_col(df: pd.DataFrame, col: str, default: object, dtype: str) -> None:

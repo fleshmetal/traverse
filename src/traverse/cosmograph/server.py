@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Union
 
 import pandas as pd
 
+from traverse.graph.cooccurrence import CooccurrenceGraph
 from traverse.graph.community import (
     CommunityAlgorithm,
     cooccurrence_to_networkx,
@@ -120,7 +121,7 @@ class _CORSHandler(SimpleHTTPRequestHandler):
 
         # Resolve the data file relative to the serve directory with
         # path-traversal protection.
-        serve_dir = Path(self.directory)  # type: ignore[attr-defined]
+        serve_dir = Path(self.directory)
         try:
             resolved = (serve_dir / data_file).resolve()
             if not str(resolved).startswith(str(serve_dir.resolve())):
@@ -133,10 +134,10 @@ class _CORSHandler(SimpleHTTPRequestHandler):
 
         try:
             graph_json = json.loads(resolved.read_text(encoding="utf-8"))
-            graph = {
-                "points": graph_json.get("points", []),
-                "links": graph_json.get("links", []),
-            }
+            graph = CooccurrenceGraph(
+                points=graph_json.get("points", []),
+                links=graph_json.get("links", []),
+            )
         except Exception as exc:
             self._json_error(500, f"Failed to read data file: {exc}")
             return
@@ -195,7 +196,7 @@ class _CORSHandler(SimpleHTTPRequestHandler):
             return
 
         # Resolve data file
-        serve_dir = Path(self.directory)  # type: ignore[attr-defined]
+        serve_dir = Path(self.directory)
         try:
             resolved = (serve_dir / data_file).resolve()
             if not str(resolved).startswith(str(serve_dir.resolve())):
@@ -208,10 +209,10 @@ class _CORSHandler(SimpleHTTPRequestHandler):
 
         try:
             graph_json = json.loads(resolved.read_text(encoding="utf-8"))
-            graph = {
-                "points": graph_json.get("points", []),
-                "links": graph_json.get("links", []),
-            }
+            graph = CooccurrenceGraph(
+                points=graph_json.get("points", []),
+                links=graph_json.get("links", []),
+            )
         except Exception as exc:
             self._json_error(500, f"Failed to read data file: {exc}")
             return

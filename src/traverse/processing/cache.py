@@ -9,12 +9,12 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple, cast
 
 import pandas as pd
 
 from traverse.processing.base import Pipeline
-from traverse.processing.tables import BuildCanonicalTables
+from traverse.processing.tables import BuildCanonicalTables, TablesDict
 
 
 def _status(msg: str) -> None:
@@ -74,9 +74,9 @@ class CanonicalTableCache:
             tables = self.enrich_fn(tables)
 
         pipe = Pipeline([BuildCanonicalTables()])
-        out = pipe.run(tables)
-        plays_wide = out.get("plays_wide", pd.DataFrame())
-        tracks_wide = out.get("tracks_wide", pd.DataFrame())
+        out = pipe.run(cast(TablesDict, tables))
+        plays_wide = cast(pd.DataFrame, out.get("plays_wide", pd.DataFrame()))
+        tracks_wide = cast(pd.DataFrame, out.get("tracks_wide", pd.DataFrame()))
 
         if plays_wide.empty:
             raise RuntimeError("Canonical plays_wide empty after build; check inputs.")

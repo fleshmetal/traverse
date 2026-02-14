@@ -31,7 +31,7 @@ def _ensure_columns(df: DataFrame, cols: List[str]) -> DataFrame:
     for c in cols:
         if c not in out.columns:
             out[c] = pd.Series([pd.NA] * len(out))
-    return out
+    return cast(DataFrame, out)
 
 
 def _coerce_tracks_to_canonical(tracks_in: DataFrame) -> DataFrame:
@@ -95,7 +95,7 @@ def _coerce_tracks_to_canonical(tracks_in: DataFrame) -> DataFrame:
         .drop_duplicates(subset=["track_id"], keep="first")
         .reset_index(drop=True)
     )
-    return df
+    return cast(DataFrame, df)
 
 
 def _coerce_plays_to_canonical(plays_in: DataFrame) -> DataFrame:
@@ -131,7 +131,7 @@ def _coerce_plays_to_canonical(plays_in: DataFrame) -> DataFrame:
 
     keep = ["played_at", "track_id", "ms_played"]
     df = _ensure_columns(df, keep)[keep].copy()
-    return df
+    return cast(DataFrame, df)
 
 
 def _fold_genre_style_tables(tracks: DataFrame, tables: Dict[str, DataFrame]) -> DataFrame:
@@ -168,7 +168,7 @@ def _fold_genre_style_tables(tracks: DataFrame, tables: Dict[str, DataFrame]) ->
             df = df.drop(columns=["styles"])
         df = df.merge(s_agg, on="track_id", how="left")
 
-    return df
+    return cast(DataFrame, df)
 
 
 @dataclass
@@ -185,15 +185,9 @@ class BuildCanonicalTables(Processor):
 
     def run(self, tables: Dict[str, DataFrame]) -> TablesDict:  # type: ignore[override]
         # Accept multiple possible keys from earlier steps
-        plays_in: DataFrame = cast(
-            DataFrame, tables.get("plays_wide", tables.get("plays", pd.DataFrame()))
-        )
-        tracks_in: DataFrame = cast(
-            DataFrame, tables.get("tracks_wide", tables.get("tracks", pd.DataFrame()))
-        )
-        artists_in: DataFrame = cast(
-            DataFrame, tables.get("artists_wide", tables.get("artists", pd.DataFrame()))
-        )
+        plays_in = tables.get("plays_wide", tables.get("plays", pd.DataFrame()))
+        tracks_in = tables.get("tracks_wide", tables.get("tracks", pd.DataFrame()))
+        artists_in = tables.get("artists_wide", tables.get("artists", pd.DataFrame()))
 
         # Fold separate genres/styles tables (from FastGenreStyleEnricher) onto tracks
         tracks_in = _fold_genre_style_tables(tracks_in, tables)

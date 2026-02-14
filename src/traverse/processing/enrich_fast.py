@@ -410,11 +410,11 @@ def build_plays_with_tags(tables: TablesDict, *, explode: bool = False) -> pd.Da
         out["styles"] = [[] for _ in range(len(out))]
 
     if not explode:
-        return out
+        return cast(pd.DataFrame, out)
 
     # exploded: one tag per row, strings not lists
     out_g = out.explode("genres", ignore_index=True)
     out_g["genres"] = out_g["genres"].fillna("").astype("string")
     out_g = out_g.explode("styles", ignore_index=True)
     out_g["styles"] = out_g["styles"].fillna("").astype("string")
-    return out_g
+    return cast(pd.DataFrame, out_g)

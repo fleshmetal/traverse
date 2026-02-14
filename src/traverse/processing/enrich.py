@@ -32,7 +32,7 @@ def _get_df(tables: TablesDict, key: str) -> pd.DataFrame:
     """Safely get a DataFrame from TablesDict; return empty DF if missing or not a DF."""
     obj = tables.get(key)
     if isinstance(obj, pd.DataFrame):
-        return obj.copy()
+        return cast(pd.DataFrame, obj.copy())
     return pd.DataFrame([])
 
 
@@ -189,11 +189,13 @@ class GenreStyleEnricher(Processor):
             first_nk_map = (
                 names.dropna(subset=["name_key"]).groupby("track_id")["name_key"].first().to_dict()
             )
-            for tid, nk in first_nk_map.items():
-                for g in nk_to_genres.get(cast(str, nk), set()):
-                    gen_rows.append((str(tid), g))
-                for s in nk_to_styles.get(cast(str, nk), set()):
-                    sty_rows.append((str(tid), s))
+            for tid_key, nk in first_nk_map.items():
+                tid_s = str(tid_key)
+                nk_s = str(nk)
+                for g in nk_to_genres.get(nk_s, set()):
+                    gen_rows.append((tid_s, g))
+                for s in nk_to_styles.get(nk_s, set()):
+                    sty_rows.append((tid_s, s))
 
         # Build DataFrames and union with existing
         base_genres = out_dict.get("genres", pd.DataFrame(columns=["track_id", "genre"])).copy()
@@ -281,11 +283,11 @@ def build_plays_with_tags(tables: TablesDict, *, explode: bool = False) -> pd.Da
         out["styles"] = [[] for _ in range(len(out))]
 
     if not explode:
-        return out
+        return cast(pd.DataFrame, out)
 
     # Explode genres first, then styles (no cartesian product across lists)
     out_g = out.explode("genres", ignore_index=True)
     out_g["genres"] = out_g["genres"].fillna("")
     out_g = out_g.explode("styles", ignore_index=True)
     out_g["styles"] = out_g["styles"].fillna("")
-    return out_g
+    return cast(pd.DataFrame, out_g)
