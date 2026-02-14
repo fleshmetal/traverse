@@ -8,7 +8,7 @@ import pandas as pd
 from pandas import DataFrame
 
 from traverse.processing.base import Processor
-from traverse.processing.normalize import split_genres_styles, safe_str
+from traverse.processing.normalize import safe_str
 
 # Canonical tables contract used across the pipeline
 class TablesDict(TypedDict, total=False):

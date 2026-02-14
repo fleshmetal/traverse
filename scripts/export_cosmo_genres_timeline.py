@@ -20,9 +20,9 @@ except Exception:
     except Exception:
         _Enricher = None
 
-from traverse.processing.tables import BuildCanonicalTables
-from traverse.processing.base import Pipeline
-from traverse.processing.normalize import split_genres_styles  # robust splitter
+from traverse.processing.tables import BuildCanonicalTables  # noqa: E402
+from traverse.processing.base import Pipeline  # noqa: E402
+from traverse.processing.normalize import split_genres_styles  # noqa: E402
 
 # --- Helpers ------------------------------------------------------------------
 

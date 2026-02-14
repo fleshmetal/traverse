@@ -1,5 +1,9 @@
 from __future__ import annotations
-import argparse, datetime, json, re, sys
+import argparse
+import datetime
+import json
+import re
+import sys
 from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
@@ -19,9 +23,11 @@ except Exception:
 SEP_RE = re.compile(r"[|,;/]+")
 
 def _fallback_split(val: object) -> List[str]:
-    if val is None: return []
+    if val is None:
+        return []
     s = str(val).strip()
-    if not s or s.lower() in {"na","nan","none"}: return []
+    if not s or s.lower() in {"na","nan","none"}:
+        return []
     if s.startswith("[") and s.endswith("]"):
         try:
             arr = json.loads(s)
@@ -34,7 +40,8 @@ TRIM = re.compile(r"^[\s'\"`~!@#$%^*_=+<>?.,:;\\/\-\|&]+|[\s'\"`~!@#$%^*_=+<>?.,
 def clean_tag(tag: str) -> Optional[str]:
     t = TRIM.sub("", str(tag)).lower()
     t = re.sub(r"\s+", " ", t).strip()
-    if not t or not re.search(r"[a-z]", t): return None
+    if not t or not re.search(r"[a-z]", t):
+        return None
     return t
 
 def split_tags(val: object) -> List[str]:
@@ -45,7 +52,8 @@ def split_tags(val: object) -> List[str]:
     out = []
     for r in raw:
         ct = clean_tag(r)
-        if ct: out.append(ct)
+        if ct:
+            out.append(ct)
     return out
 
 def pretty_label(tag: str) -> str:
@@ -53,16 +61,19 @@ def pretty_label(tag: str) -> str:
 
 def cooccurrence_pairs(tags: Iterable[str]) -> Iterable[Tuple[str,str]]:
     uniq = sorted(set(t for t in tags if t))
-    if len(uniq) < 2: return []
+    if len(uniq) < 2:
+        return []
     return combinations(uniq, 2)
 
 YR4 = re.compile(r"(?:^|[^0-9])(\d{4})(?:[^0-9]|$)")
 def parse_year_cell(v: object) -> Optional[int]:
-    if v is None: return None
+    if v is None:
+        return None
     s = str(v).strip()
     try:
         y = int(float(s))
-        if 0 < y < 10000: return y
+        if 0 < y < 10000:
+            return y
     except Exception:
         pass
     m = YR4.search(s)
@@ -74,7 +85,8 @@ def parse_year_cell(v: object) -> Optional[int]:
 
 def detect_column(colmap: Dict[str,str], *candidates: str) -> Optional[str]:
     for c in candidates:
-        if c in colmap: return colmap[c]
+        if c in colmap:
+            return colmap[c]
     return None
 
 def status(msg: str) -> None:
@@ -100,20 +112,25 @@ def main() -> None:
     args = ap.parse_args()
 
     rec_path = Path(args.records_csv)
-    out_path = Path(args.out_json); out_path.parent.mkdir(parents=True, exist_ok=True)
-    dbg_dir = Path("_debug"); 
-    if args.debug: dbg_dir.mkdir(parents=True, exist_ok=True)
+    out_path = Path(args.out_json)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    dbg_dir = Path("_debug")
+    if args.debug:
+        dbg_dir.mkdir(parents=True, exist_ok=True)
 
     YEAR_MIN, YEAR_MAX = int(args.year_min), int(args.year_max)
 
     def clamp_year(y: Optional[int]) -> Optional[int]:
-        if y is None: return None
-        if y < YEAR_MIN or y > YEAR_MAX: return None
+        if y is None:
+            return None
+        if y < YEAR_MIN or y > YEAR_MAX:
+            return None
         return y
 
     def year_to_ts(y: Optional[int]) -> Optional[int]:
         """Convert year to Unix epoch milliseconds (Jan 1 of that year UTC)."""
-        if y is None: return None
+        if y is None:
+            return None
         return int(datetime.datetime(y, 1, 1, tzinfo=datetime.timezone.utc).timestamp() * 1000)
 
     counts: Counter[Tuple[str,str]] = Counter()
@@ -217,7 +234,8 @@ def main() -> None:
 
     strength = defaultdict(int)
     for a,b,w in edges:
-        strength[a] += w; strength[b] += w
+        strength[a] += w
+        strength[b] += w
 
     if args.max_nodes and args.max_nodes > 0:
         keep = {n for n,_ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[:args.max_nodes]}
@@ -228,7 +246,8 @@ def main() -> None:
 
     node_ids = set()
     for a,b,_ in edges:
-        node_ids.add(a); node_ids.add(b)
+        node_ids.add(a)
+        node_ids.add(b)
 
     # points
     points = []
@@ -252,11 +271,14 @@ def main() -> None:
 
     for a,b,w in edges:
         if not _ok(a):
-            skipped["non_str_source" if not isinstance(a,str) else "empty_source"] += 1; continue
+            skipped["non_str_source" if not isinstance(a,str) else "empty_source"] += 1
+            continue
         if not _ok(b):
-            skipped["non_str_target" if not isinstance(b,str) else "empty_target"] += 1; continue
+            skipped["non_str_target" if not isinstance(b,str) else "empty_target"] += 1
+            continue
         if (a not in pset) or (b not in pset):
-            skipped["not_in_points"] += 1; continue
+            skipped["not_in_points"] += 1
+            continue
         lk = {"source": a, "target": b, "weight": int(w)}
         fy = edge_first_year.get((a,b))
         if fy is not None:

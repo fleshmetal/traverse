@@ -1,7 +1,7 @@
 from __future__ import annotations
 import sys
 from pathlib import Path
-from typing import Optional, Iterable, List, Tuple
+from typing import Iterable, List, Tuple
 from collections import Counter
 import pandas as pd
 

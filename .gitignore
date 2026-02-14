@@ -23,6 +23,8 @@ htmlcov/
 # OS / Editor
 .DS_Store
 .vscode/
+NUL
+nul
 
 # Local outputs
 _out/
