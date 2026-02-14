@@ -189,11 +189,13 @@ class GenreStyleEnricher(Processor):
             first_nk_map = (
                 names.dropna(subset=["name_key"]).groupby("track_id")["name_key"].first().to_dict()
             )
-            for tid, nk in first_nk_map.items():
-                for g in nk_to_genres.get(cast(str, nk), set()):
-                    gen_rows.append((str(tid), g))
-                for s in nk_to_styles.get(cast(str, nk), set()):
-                    sty_rows.append((str(tid), s))
+            for tid_key, nk in first_nk_map.items():
+                tid_s = str(tid_key)
+                nk_s = str(nk)
+                for g in nk_to_genres.get(nk_s, set()):
+                    gen_rows.append((tid_s, g))
+                for s in nk_to_styles.get(nk_s, set()):
+                    sty_rows.append((tid_s, s))
 
         # Build DataFrames and union with existing
         base_genres = out_dict.get("genres", pd.DataFrame(columns=["track_id", "genre"])).copy()
