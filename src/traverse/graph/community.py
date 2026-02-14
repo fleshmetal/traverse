@@ -30,14 +30,14 @@ class CommunityAlgorithm(str, Enum):
     K_CLIQUE = "k_clique"
 
 
-def cooccurrence_to_networkx(graph: CooccurrenceGraph) -> nx.Graph:
+def cooccurrence_to_networkx(graph: CooccurrenceGraph) -> nx.Graph[Any]:
     """Convert a :class:`CooccurrenceGraph` to a weighted undirected NetworkX graph.
 
     All node and edge attributes (label, first_seen, category, weight, etc.)
     are preserved.  Distinct from :func:`adapters_networkx.to_networkx` which
     operates on DataFrame-based ``GraphTables``.
     """
-    G = nx.Graph()
+    G: nx.Graph[Any] = nx.Graph()
     for pt in graph.get("points", []):
         attrs = {k: v for k, v in pt.items() if k != "id"}
         G.add_node(pt["id"], **attrs)
@@ -48,7 +48,7 @@ def cooccurrence_to_networkx(graph: CooccurrenceGraph) -> nx.Graph:
 
 
 def detect_communities(
-    G: nx.Graph,
+    G: nx.Graph[Any],
     algorithm: CommunityAlgorithm = CommunityAlgorithm.LOUVAIN,
     *,
     resolution: float = 1.0,
@@ -81,6 +81,7 @@ def detect_communities(
         Clique size for k-clique percolation.  Required when *algorithm* is
         ``K_CLIQUE``.  Ignored by other algorithms.
     """
+    communities: Any
     if algorithm == CommunityAlgorithm.LOUVAIN:
         communities = nx.community.louvain_communities(
             G,

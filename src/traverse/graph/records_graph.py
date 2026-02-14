@@ -8,7 +8,7 @@ a records DataFrame suitable for album lookup.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -47,19 +47,20 @@ def build_records_graph(
     records_acc: List[Dict[str, str]] = []
     total_rows = 0
 
-    reader = pd.read_csv(
+    raw_reader = pd.read_csv(
         records_csv,
         chunksize=chunksize,
         dtype="string",
         keep_default_na=True,
         na_filter=True,
     )
+    reader: Any = raw_reader
 
     if progress:
         try:
             from tqdm import tqdm
 
-            reader = tqdm(reader, desc="Reading records", unit="chunk")
+            reader = tqdm(raw_reader, desc="Reading records", unit="chunk")
         except ImportError:
             pass
 

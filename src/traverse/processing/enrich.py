@@ -32,7 +32,7 @@ def _get_df(tables: TablesDict, key: str) -> pd.DataFrame:
     """Safely get a DataFrame from TablesDict; return empty DF if missing or not a DF."""
     obj = tables.get(key)
     if isinstance(obj, pd.DataFrame):
-        return obj.copy()
+        return cast(pd.DataFrame, obj.copy())
     return pd.DataFrame([])
 
 
@@ -281,11 +281,11 @@ def build_plays_with_tags(tables: TablesDict, *, explode: bool = False) -> pd.Da
         out["styles"] = [[] for _ in range(len(out))]
 
     if not explode:
-        return out
+        return cast(pd.DataFrame, out)
 
     # Explode genres first, then styles (no cartesian product across lists)
     out_g = out.explode("genres", ignore_index=True)
     out_g["genres"] = out_g["genres"].fillna("")
     out_g = out_g.explode("styles", ignore_index=True)
     out_g["styles"] = out_g["styles"].fillna("")
-    return out_g
+    return cast(pd.DataFrame, out_g)

@@ -43,9 +43,9 @@ def subgraph_from_nodes(
     return CooccurrenceGraph(points=points, links=links)
 
 
-def _cooccurrence_to_nx(graph: CooccurrenceGraph) -> nx.Graph:
+def _cooccurrence_to_nx(graph: CooccurrenceGraph) -> nx.Graph[Any]:
     """Lightweight converter (same logic as community.cooccurrence_to_networkx)."""
-    G = nx.Graph()
+    G: nx.Graph[Any] = nx.Graph()
     for pt in graph.get("points", []):
         attrs = {k: v for k, v in pt.items() if k != "id"}
         G.add_node(pt["id"], **attrs)
@@ -56,7 +56,7 @@ def _cooccurrence_to_nx(graph: CooccurrenceGraph) -> nx.Graph:
 
 
 def analyze_edges(
-    G: nx.Graph,
+    G: nx.Graph[Any],
     algorithm: EdgeAlgorithm = EdgeAlgorithm.EDGE_BETWEENNESS,
     *,
     normalized: bool = True,
@@ -81,6 +81,7 @@ def analyze_edges(
         Each dict has ``source``, ``target``, ``score``, and
         ``algorithm``.  For bridges, ``score`` is always ``1.0``.
     """
+    scores: Dict[Tuple[str, str], float]
     if algorithm == EdgeAlgorithm.EDGE_BETWEENNESS:
         scores = nx.edge_betweenness_centrality(
             G,
@@ -89,7 +90,7 @@ def analyze_edges(
         )
     elif algorithm == EdgeAlgorithm.CURRENT_FLOW_BETWEENNESS:
         try:
-            import scipy  # noqa: F401  — required by NetworkX for this algorithm
+            import scipy  # type: ignore[import-untyped]  # noqa: F401
         except ImportError:
             raise ImportError(
                 "Current-flow betweenness requires scipy. Install it with: pip install scipy"
@@ -97,7 +98,7 @@ def analyze_edges(
         if not nx.is_connected(G):
             # Current-flow requires a connected graph.  Score each
             # component separately and merge results.
-            scores: Dict[Tuple[str, str], float] = {}
+            scores = {}
             for comp_nodes in nx.connected_components(G):
                 if len(comp_nodes) < 2:
                     continue
@@ -115,10 +116,11 @@ def analyze_edges(
                 normalized=normalized,
             )
     elif algorithm == EdgeAlgorithm.BRIDGES:
-        bridge_set = set(nx.bridges(G))
+        bridge_set: set[Tuple[str, str]] = set(nx.bridges(G))
         scores = {e: 1.0 for e in G.edges()}
         for e in scores:
-            if e in bridge_set or (e[1], e[0]) in bridge_set:
+            rev = (e[1], e[0])
+            if e in bridge_set or rev in bridge_set:
                 scores[e] = 1.0
             else:
                 scores[e] = 0.0
