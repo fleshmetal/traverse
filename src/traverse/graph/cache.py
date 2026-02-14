@@ -3,6 +3,7 @@
 Avoids repeating an expensive CSV scan by persisting the results to disk.
 Modeled after :class:`traverse.processing.tables.CanonicalTableCache`.
 """
+
 from __future__ import annotations
 
 import json
@@ -76,4 +77,6 @@ class GraphCache:
 
         # Save records parquet
         records_df.to_parquet(self._records_path(), index=False)
-        print(f"Cached records → {self._records_path()} ({len(records_df):,} rows)", file=sys.stderr)
+        print(
+            f"Cached records → {self._records_path()} ({len(records_df):,} rows)", file=sys.stderr
+        )

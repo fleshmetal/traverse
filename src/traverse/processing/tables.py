@@ -10,6 +10,7 @@ from pandas import DataFrame
 from traverse.processing.base import Processor
 from traverse.processing.normalize import safe_str
 
+
 # Canonical tables contract used across the pipeline
 class TablesDict(TypedDict, total=False):
     # Inputs (may exist in various shapes)
@@ -76,14 +77,24 @@ def _coerce_tracks_to_canonical(tracks_in: DataFrame) -> DataFrame:
         # Accept list-like or string; normalize to ' | ' delimited strings
         s = df[col]
         if pd.api.types.is_list_like(s.iloc[0]) if len(df) else False:
-            df[col] = s.apply(lambda x: " | ".join(map(safe_str, cast(List[str], x))) if isinstance(x, list) else safe_str(x))
+            df[col] = s.apply(
+                lambda x: (
+                    " | ".join(map(safe_str, cast(List[str], x)))
+                    if isinstance(x, list)
+                    else safe_str(x)
+                )
+            )
         else:
             # already string-like; just coerce to string and clean doubles
             df[col] = df[col].astype("string").fillna("")
 
     # Minimal select & dedupe
     keep = ["track_id", "track_name", "artist_name", "genres", "styles"]
-    df = _ensure_columns(df, keep)[keep].drop_duplicates(subset=["track_id"], keep="first").reset_index(drop=True)
+    df = (
+        _ensure_columns(df, keep)[keep]
+        .drop_duplicates(subset=["track_id"], keep="first")
+        .reset_index(drop=True)
+    )
     return df
 
 
@@ -174,9 +185,15 @@ class BuildCanonicalTables(Processor):
 
     def run(self, tables: Dict[str, DataFrame]) -> TablesDict:  # type: ignore[override]
         # Accept multiple possible keys from earlier steps
-        plays_in: DataFrame = cast(DataFrame, tables.get("plays_wide", tables.get("plays", pd.DataFrame())))
-        tracks_in: DataFrame = cast(DataFrame, tables.get("tracks_wide", tables.get("tracks", pd.DataFrame())))
-        artists_in: DataFrame = cast(DataFrame, tables.get("artists_wide", tables.get("artists", pd.DataFrame())))
+        plays_in: DataFrame = cast(
+            DataFrame, tables.get("plays_wide", tables.get("plays", pd.DataFrame()))
+        )
+        tracks_in: DataFrame = cast(
+            DataFrame, tables.get("tracks_wide", tables.get("tracks", pd.DataFrame()))
+        )
+        artists_in: DataFrame = cast(
+            DataFrame, tables.get("artists_wide", tables.get("artists", pd.DataFrame()))
+        )
 
         # Fold separate genres/styles tables (from FastGenreStyleEnricher) onto tracks
         tracks_in = _fold_genre_style_tables(tracks_in, tables)
@@ -207,7 +224,9 @@ class BuildCanonicalTables(Processor):
                     a = a.rename(columns={"name": "artist_name"})
                 else:
                     a["artist_name"] = pd.NA
-            artists_wide = a[["artist_id", "artist_name"]].drop_duplicates("artist_id").reset_index(drop=True)
+            artists_wide = (
+                a[["artist_id", "artist_name"]].drop_duplicates("artist_id").reset_index(drop=True)
+            )
             artists_wide["artist_id"] = artists_wide["artist_id"].astype("string").fillna("")
             artists_wide["artist_name"] = artists_wide["artist_name"].astype("string").fillna("")
 

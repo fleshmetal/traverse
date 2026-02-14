@@ -12,6 +12,7 @@ import pandas as pd
 
 SEP_RE = re.compile(r"[|,;/]+")
 
+
 def split_multi(val: object) -> List[str]:
     """Return normalized tags list from a genres/styles field."""
     if val is None:
@@ -30,6 +31,7 @@ def split_multi(val: object) -> List[str]:
     parts = [norm(x) for x in SEP_RE.split(s)]
     return [p for p in parts if p]
 
+
 def norm(t: str) -> str:
     """Normalize a tag for identity; keep readable, merge small variations."""
     # collapse whitespace, lower, strip punctuation at ends
@@ -37,14 +39,18 @@ def norm(t: str) -> str:
     out = out.strip(" '\"-–—·•")
     return out
 
+
 def cooccurrence_pairs(tags: Iterable[str]) -> Iterable[Tuple[str, str]]:
     uniq = sorted(set(tags))
     if len(uniq) < 2:
         return []
     return combinations(uniq, 2)  # unordered (a,b) with a<b
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Export genre/style co-occurrence graph for Cosmograph.")
+    ap = argparse.ArgumentParser(
+        description="Export genre/style co-occurrence graph for Cosmograph."
+    )
     ap.add_argument("--records-csv", required=True)
     ap.add_argument("--chunksize", type=int, default=200_000)
     ap.add_argument("--min-cooccurrence", type=int, default=2)
@@ -118,7 +124,12 @@ def main():
 
     # Node capping by strength
     if args.max_nodes and args.max_nodes > 0:
-        top_nodes = {n for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[: args.max_nodes]}
+        top_nodes = {
+            n
+            for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[
+                : args.max_nodes
+            ]
+        }
         edges = [(a, b, w) for a, b, w in edges if a in top_nodes and b in top_nodes]
 
     # Edge capping
@@ -143,6 +154,7 @@ def main():
     out = {"points": nodes, "links": links}
     Path(args.out_json).write_text(json.dumps(out, indent=2))
     print(f"✔ Wrote {args.out_json}  (nodes={len(nodes)}, edges={len(links)})")
+
 
 if __name__ == "__main__":
     main()

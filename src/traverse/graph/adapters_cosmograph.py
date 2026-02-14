@@ -5,6 +5,7 @@ the Cosmograph frontend (``traverse.cosmograph``) and the Cosmograph web viewer.
 
 Distinct from :class:`WebGLJSONAdapter` which produces ``{nodes, edges}``.
 """
+
 from __future__ import annotations
 
 import json

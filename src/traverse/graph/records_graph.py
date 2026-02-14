@@ -4,6 +4,7 @@ Streams the CSV in chunks, extracts genre/style tags per row, feeds them
 into a :class:`CooccurrenceBuilder`, and returns the finished graph plus
 a records DataFrame suitable for album lookup.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -57,6 +58,7 @@ def build_records_graph(
     if progress:
         try:
             from tqdm import tqdm
+
             reader = tqdm(reader, desc="Reading records", unit="chunk")
         except ImportError:
             pass
@@ -91,14 +93,17 @@ def build_records_graph(
 
             builder.add(tags, label_fn=pretty_label, tag_categories=tag_categories)
 
-            records_acc.append({
-                "track_name": str(tval) if pd.notna(tval) else "",
-                "artist_name": str(aval) if pd.notna(aval) else "",
-                "genres": " | ".join(pretty_label(t) for t in genre_tags),
-                "styles": " | ".join(pretty_label(t) for t in style_tags),
-            })
+            records_acc.append(
+                {
+                    "track_name": str(tval) if pd.notna(tval) else "",
+                    "artist_name": str(aval) if pd.notna(aval) else "",
+                    "genres": " | ".join(pretty_label(t) for t in genre_tags),
+                    "styles": " | ".join(pretty_label(t) for t in style_tags),
+                }
+            )
 
     import sys
+
     stats = builder.stats
     print(
         f"Scanned {total_rows:,} rows, {stats['rows_with_tags']:,} with tags, "

@@ -6,6 +6,7 @@ detection, and writes the cluster assignments back onto the graph points.
 Supported algorithms: Louvain, greedy modularity, label propagation,
 Kernighan-Lin bisection, edge betweenness (Girvan-Newman), and k-clique.
 """
+
 from __future__ import annotations
 
 import copy
@@ -82,7 +83,10 @@ def detect_communities(
     """
     if algorithm == CommunityAlgorithm.LOUVAIN:
         communities = nx.community.louvain_communities(
-            G, weight="weight", resolution=resolution, seed=seed,
+            G,
+            weight="weight",
+            resolution=resolution,
+            seed=seed,
         )
     elif algorithm == CommunityAlgorithm.GREEDY_MODULARITY:
         kwargs: Dict[str, Any] = {"weight": "weight", "resolution": resolution}
@@ -92,19 +96,25 @@ def detect_communities(
         communities = nx.community.greedy_modularity_communities(G, **kwargs)
     elif algorithm == CommunityAlgorithm.LABEL_PROPAGATION:
         communities = nx.community.asyn_lpa_communities(
-            G, weight="weight", seed=seed,
+            G,
+            weight="weight",
+            seed=seed,
         )
     elif algorithm == CommunityAlgorithm.KERNIGHAN_LIN:
         # Recursive bisection: produces exactly 2 partitions.
         communities = nx.community.kernighan_lin_bisection(
-            G, weight="weight", seed=seed,
+            G,
+            weight="weight",
+            seed=seed,
         )
     elif algorithm == CommunityAlgorithm.EDGE_BETWEENNESS:
         # Girvan-Newman iteratively removes highest-betweenness edges.
         # Each step yields one more community; take the (best_n)th step.
         n_splits = best_n if best_n is not None else 1
         gn_iter = nx.community.girvan_newman(G)
-        communities = next(islice(gn_iter, n_splits - 1, n_splits), next(nx.community.girvan_newman(G)))
+        communities = next(
+            islice(gn_iter, n_splits - 1, n_splits), next(nx.community.girvan_newman(G))
+        )
     elif algorithm == CommunityAlgorithm.K_CLIQUE:
         if k is None:
             raise ValueError("k is required for K_CLIQUE algorithm")
@@ -167,6 +177,11 @@ def add_communities(
     """
     G = cooccurrence_to_networkx(graph)
     assignments = detect_communities(
-        G, algorithm, resolution=resolution, seed=seed, best_n=best_n, k=k,
+        G,
+        algorithm,
+        resolution=resolution,
+        seed=seed,
+        best_n=best_n,
+        k=k,
     )
     return apply_communities(graph, assignments, field=field)

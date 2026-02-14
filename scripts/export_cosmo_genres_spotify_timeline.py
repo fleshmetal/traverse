@@ -10,13 +10,18 @@ from typing import Dict, Iterable, List, Tuple, Optional, Set
 
 import pandas as pd
 
+
 # -------------------- Debug helpers --------------------
 def _status(msg: str) -> None:
     print(msg, file=sys.stderr)
 
+
 DBG_DIR = Path("_debug")
+
+
 def _ensure_dbg_dir() -> None:
     DBG_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def _writetxt(rel: str, text: str) -> None:
     p = DBG_DIR / rel
@@ -26,6 +31,7 @@ def _writetxt(rel: str, text: str) -> None:
     except Exception as e:
         _status(f"[DBG] failed to write {p}: {e}")
 
+
 def _writecsv(rel: str, df: pd.DataFrame, n: int = 1000) -> None:
     p = DBG_DIR / rel
     try:
@@ -34,13 +40,16 @@ def _writecsv(rel: str, df: pd.DataFrame, n: int = 1000) -> None:
     except Exception as e:
         _status(f"[DBG] failed to write {p}: {e}")
 
+
 # -------------------- Tag parsing ----------------------
 SEP_RE = re.compile(r"[|,;/]+")
+
 
 def norm_tag(t: object) -> str:
     s = re.sub(r"\s+", " ", str(t or "")).strip().lower()
     s = s.strip(" '\"-–—·•")
     return s
+
 
 def split_tags(val: object) -> List[str]:
     if val is None:
@@ -65,18 +74,22 @@ def split_tags(val: object) -> List[str]:
             pass
     return [norm_tag(x) for x in SEP_RE.split(s) if str(x).strip()]
 
+
 def pretty_label(t: str) -> str:
     out = str(t).title()
     return out.replace("Idm", "IDM").replace("Edm", "EDM").replace("Dnb", "DnB")
 
+
 def pair(a: str, b: str) -> Tuple[str, str]:
     return (a, b) if a <= b else (b, a)
+
 
 def cooccurrence_pairs(tags: Iterable[str]) -> Iterable[Tuple[str, str]]:
     uniq = sorted(set(t for t in tags if t))
     if len(uniq) < 2:
         return []
     return combinations(uniq, 2)
+
 
 # -------------------- Traverse tooling (optional) --------------------
 _Enricher = None
@@ -95,8 +108,11 @@ except Exception:
     BuildCanonicalTables = None
     Pipeline = None
 
+
 # -------------------- Spotify Extended loader ------------------------
-def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) -> Dict[str, pd.DataFrame]:
+def _load_spotify_extended_minimal(
+    extended_dir: Path, progress: bool = True
+) -> Dict[str, pd.DataFrame]:
     from glob import glob
     import gzip
     import io
@@ -117,6 +133,7 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
     if progress:
         try:
             from tqdm import tqdm
+
             it = tqdm(files, desc="Reading Extended JSON", unit="file")
         except Exception:
             pass
@@ -140,7 +157,9 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
                 track_id = "trk:" + track_uri.split(":")[-1]
             if not track_id:
                 if track_name and artist_name:
-                    track_id = f"nk:{str(artist_name).strip().lower()}||{str(track_name).strip().lower()}"
+                    track_id = (
+                        f"nk:{str(artist_name).strip().lower()}||{str(track_name).strip().lower()}"
+                    )
 
             if played_at is None or ms_played is None or track_id is None:
                 continue
@@ -160,11 +179,10 @@ def _load_spotify_extended_minimal(extended_dir: Path, progress: bool = True) ->
         plays = plays.dropna(subset=["played_at", "track_id"]).reset_index(drop=True)
 
     tracks = (
-        plays[["track_id", "track_name", "artist_name"]]
-        .drop_duplicates()
-        .reset_index(drop=True)
+        plays[["track_id", "track_name", "artist_name"]].drop_duplicates().reset_index(drop=True)
     )
     return {"plays": plays, "tracks": tracks, "artists": pd.DataFrame()}  # artists unused here
+
 
 # -------------------- Canonical build (with enrichment) ----------------
 def _build_or_load_canonicals(
@@ -185,7 +203,9 @@ def _build_or_load_canonicals(
         return pd.read_parquet(p_parquet), pd.read_parquet(t_parquet)
 
     if extended_dir is None or BuildCanonicalTables is None or Pipeline is None:
-        raise RuntimeError("To rebuild canonicals, provide --extended-dir and ensure traverse processors are importable.")
+        raise RuntimeError(
+            "To rebuild canonicals, provide --extended-dir and ensure traverse processors are importable."
+        )
 
     _status("⏳ Building canonical tables from Extended Streaming History…")
     t0 = _load_spotify_extended_minimal(extended_dir, progress=progress)
@@ -224,6 +244,7 @@ def _build_or_load_canonicals(
 
     return plays_wide, tracks_wide
 
+
 # -------------------- Records fallback (name-key join) -----------------
 def _records_namekey_enrichment(
     plays_wide: pd.DataFrame,
@@ -233,6 +254,7 @@ def _records_namekey_enrichment(
     debug: bool,
 ) -> Tuple[pd.DataFrame, int, int]:
     """If canonicals have empty tag columns, map in genres/styles from records.csv by normalized name-key."""
+
     # Build name-keys on tracks_wide
     def _nk(artist: object, track: object) -> Optional[str]:
         if not artist or not track:
@@ -246,7 +268,9 @@ def _records_namekey_enrichment(
     tracks = tracks_wide.copy()
     if "artist_name" not in tracks.columns or "track_name" not in tracks.columns:
         return plays_wide, 0, 0
-    tracks["__name_key__"] = tracks.apply(lambda r: _nk(r.get("artist_name"), r.get("track_name")), axis=1)
+    tracks["__name_key__"] = tracks.apply(
+        lambda r: _nk(r.get("artist_name"), r.get("track_name")), axis=1
+    )
 
     # Scan records.csv to collect (namekey -> genres/styles)
     needed: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
@@ -256,16 +280,19 @@ def _records_namekey_enrichment(
         # Be permissive about column names
         cols = {c.lower(): c for c in chunk.columns}
         artist_c = cols.get("artist") or cols.get("artist_name") or cols.get("artists")
-        track_c  = cols.get("title")  or cols.get("track_name")  or cols.get("track")
-        g_c      = cols.get("genres") or cols.get("genre")
-        s_c      = cols.get("styles") or cols.get("style")
+        track_c = cols.get("title") or cols.get("track_name") or cols.get("track")
+        g_c = cols.get("genres") or cols.get("genre")
+        s_c = cols.get("styles") or cols.get("style")
         if not artist_c or not track_c:
             continue
 
         # Build name keys and collect tags
         sub = chunk[[artist_c, track_c] + ([g_c] if g_c else []) + ([s_c] if s_c else [])].copy()
-        sub["__name_key__"] = (sub[artist_c].astype(str).str.strip().str.lower() + "||" +
-                               sub[track_c].astype(str).str.strip().str.lower())
+        sub["__name_key__"] = (
+            sub[artist_c].astype(str).str.strip().str.lower()
+            + "||"
+            + sub[track_c].astype(str).str.strip().str.lower()
+        )
 
         if g_c:
             sub["__genres__"] = sub[g_c]
@@ -277,18 +304,24 @@ def _records_namekey_enrichment(
             sub["__styles__"] = ""
 
         # Keep first-seen mapping per key
-        for nk, g, s in sub[["__name_key__", "__genres__", "__styles__"]].itertuples(index=False, name=None):
+        for nk, g, s in sub[["__name_key__", "__genres__", "__styles__"]].itertuples(
+            index=False, name=None
+        ):
             if nk and nk not in needed:
                 needed[nk] = (g, s)
 
         if i % 25 == 0:
             matched_nk_now = len(needed)
-            _status(f"[records scan] chunks processed={i}, unique name-keys collected so far: nk={matched_nk_now:,}")
+            _status(
+                f"[records scan] chunks processed={i}, unique name-keys collected so far: nk={matched_nk_now:,}"
+            )
 
     # Merge name-key tags to tracks
     map_df = pd.DataFrame(
-        [{"__name_key__": nk, "genres_from_records": g, "styles_from_records": s}
-         for nk, (g, s) in needed.items()]
+        [
+            {"__name_key__": nk, "genres_from_records": g, "styles_from_records": s}
+            for nk, (g, s) in needed.items()
+        ]
     )
     if debug:
         _writecsv("records_map_nk_sample.csv", map_df)
@@ -310,14 +343,21 @@ def _records_namekey_enrichment(
     nn_s = plays["styles"].fillna("").astype(str) != ""
     return plays, int(nn_g.sum()), int(nn_s.sum())
 
+
 # -------------------- Co-occurrence + timeline export -----------------
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Spotify → Canonicals(+enrich) → Genre co-occurrence with dense timeline → Cosmograph JSON"
     )
-    ap.add_argument("--cache-dir", required=True, help="Dir with canonical_plays.parquet / canonical_tracks.parquet (or where to write them)")
+    ap.add_argument(
+        "--cache-dir",
+        required=True,
+        help="Dir with canonical_plays.parquet / canonical_tracks.parquet (or where to write them)",
+    )
     ap.add_argument("--out-json", required=True)
-    ap.add_argument("--extended-dir", help="ExtendedStreamingHistory dir (enable when rebuilding with --force)")
+    ap.add_argument(
+        "--extended-dir", help="ExtendedStreamingHistory dir (enable when rebuilding with --force)"
+    )
     ap.add_argument("--records-csv", help="records.csv for enrichment and fallback")
     ap.add_argument("--chunksize", type=int, default=200_000)
     ap.add_argument("--progress", action="store_true")
@@ -389,7 +429,9 @@ def main() -> None:
                     j = tracks_wide[["track_id", c]].rename(columns={c: f"{c}__src"})
                     plays_wide = plays_wide.merge(j, on="track_id", how="left")
                     if c in plays_wide.columns:
-                        plays_wide[c] = plays_wide[c].where(~(plays_wide[c].isna() | (plays_wide[c] == "")), plays_wide[f"{c}__src"])
+                        plays_wide[c] = plays_wide[c].where(
+                            ~(plays_wide[c].isna() | (plays_wide[c] == "")), plays_wide[f"{c}__src"]
+                        )
                         plays_wide = plays_wide.drop(columns=[f"{c}__src"])
                     else:
                         plays_wide[c] = plays_wide[f"{c}__src"]
@@ -397,7 +439,9 @@ def main() -> None:
 
         after_g = plays_wide["genres"].notna().sum() if "genres" in plays_wide.columns else 0
         after_s = plays_wide["styles"].notna().sum() if "styles" in plays_wide.columns else 0
-        _status(f"[join-from-tracks] genres ({before_g:,})->({after_g:,}), styles ({before_s:,})->({after_s:,})")
+        _status(
+            f"[join-from-tracks] genres ({before_g:,})->({after_g:,}), styles ({before_s:,})->({after_s:,})"
+        )
 
     if not has_usable_tags(plays_wide) and args.records_csv:
         _status("ℹ Tags still unusable; applying records.csv fallback by name-key…")
@@ -408,27 +452,38 @@ def main() -> None:
             chunksize=args.chunksize,
             debug=args.debug,
         )
-        _status(f"[records-fallback] filled plays_wide: genres non-empty rows={ng:,}, styles non-empty rows={ns:,}")
+        _status(
+            f"[records-fallback] filled plays_wide: genres non-empty rows={ng:,}, styles non-empty rows={ns:,}"
+        )
 
     # Optional sample dump
     if args.debug:
-        _writecsv("plays_tags_sample.csv", plays_wide[["played_at", "track_id", "artist_name", "track_name", "genres", "styles"]])
+        _writecsv(
+            "plays_tags_sample.csv",
+            plays_wide[["played_at", "track_id", "artist_name", "track_name", "genres", "styles"]],
+        )
 
     # 4) Build the iterator dataframe for co-occurrence
     if args.cooccur_on == "plays":
         iter_df = plays_wide[["played_at", "genres", "styles"]].copy()
         iter_df = iter_df.sort_values("played_at", kind="stable").reset_index(drop=True)
     else:
+
         def _merge_tags(s: pd.Series) -> str:
             bag: Set[str] = set()
             for v in s.dropna().astype(str):
                 bag.update(split_tags(v))
             return "|".join(sorted(bag))
-        tg = plays_wide.groupby("track_id").agg(
-            earliest=("played_at", "min"),
-            genres=("genres", _merge_tags),
-            styles=("styles", _merge_tags),
-        ).reset_index()
+
+        tg = (
+            plays_wide.groupby("track_id")
+            .agg(
+                earliest=("played_at", "min"),
+                genres=("genres", _merge_tags),
+                styles=("styles", _merge_tags),
+            )
+            .reset_index()
+        )
         iter_df = tg.rename(columns={"earliest": "played_at"})[["played_at", "genres", "styles"]]
         iter_df = iter_df.sort_values("played_at", kind="stable").reset_index(drop=True)
 
@@ -438,6 +493,7 @@ def main() -> None:
         round_div = 3_600_000
     elif args.occurrence_dedup == "day":
         round_div = 86_400_000
+
     def _round_ts(ts_ms: int) -> int:
         return ts_ms if round_div == 1 else (ts_ms // round_div) * round_div
 
@@ -490,15 +546,21 @@ def main() -> None:
 
     if args.debug:
         parsed_preview = []
-        for i, (played_at, gval, sval) in enumerate(iter_df.head(200).itertuples(index=False, name=None)):
+        for i, (played_at, gval, sval) in enumerate(
+            iter_df.head(200).itertuples(index=False, name=None)
+        ):
             gg = split_tags(gval)
             ss = split_tags(sval)
-            parsed_preview.append({
-                "played_at": str(played_at),
-                "genres_raw": gval, "styles_raw": sval,
-                "genres_tokens": gg, "styles_tokens": ss,
-                "all_tokens": sorted(set(gg+ss)),
-            })
+            parsed_preview.append(
+                {
+                    "played_at": str(played_at),
+                    "genres_raw": gval,
+                    "styles_raw": sval,
+                    "genres_tokens": gg,
+                    "styles_tokens": ss,
+                    "all_tokens": sorted(set(gg + ss)),
+                }
+            )
         _writetxt("parsed_preview.json", json.dumps(parsed_preview, indent=2, default=str))
 
     if not counts:
@@ -517,7 +579,12 @@ def main() -> None:
         strength[b] += w
 
     if args.max_nodes and args.max_nodes > 0:
-        keep = {n for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[: args.max_nodes]}
+        keep = {
+            n
+            for n, _ in sorted(strength.items(), key=lambda kv: kv[1], reverse=True)[
+                : args.max_nodes
+            ]
+        }
         edges = [(a, b, w) for a, b, w in edges if a in keep and b in keep]
 
     if args.max_edges and args.max_edges > 0 and len(edges) > args.max_edges:
@@ -549,8 +616,10 @@ def main() -> None:
         links.append(item)
 
     if args.debug:
-        _writetxt("export_samples.json", json.dumps({"points": points[:5], "links": links[:5]}, indent=2))
-        _writetxt("edges_top50.txt", "\n".join([f"{a}\t{b}\t{w}" for a,b,w in edges[:50]]))
+        _writetxt(
+            "export_samples.json", json.dumps({"points": points[:5], "links": links[:5]}, indent=2)
+        )
+        _writetxt("edges_top50.txt", "\n".join([f"{a}\t{b}\t{w}" for a, b, w in edges[:50]]))
 
     _status(f"unique_tags={len(points)} | nodes_out={len(points)} | edges_out={len(links)}")
     out_json.write_text(json.dumps({"points": points, "links": links}, indent=2))

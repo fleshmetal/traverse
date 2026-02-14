@@ -7,6 +7,7 @@ Lighter than :class:`SpotifyExtendedExport`: produces only
 Consolidates the ``_load_spotify_extended_minimal()`` function duplicated
 across several export scripts.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -66,9 +67,7 @@ def load_spotify_extended_minimal(
             played_at = r.get("ts")
             ms_played = r.get("ms_played")
             track_name = r.get("master_metadata_track_name") or r.get("track_name")
-            artist_name = (
-                r.get("master_metadata_album_artist_name") or r.get("artist_name")
-            )
+            artist_name = r.get("master_metadata_album_artist_name") or r.get("artist_name")
             track_uri = r.get("spotify_track_uri") or r.get("track_uri")
 
             track_id: Optional[str] = None
@@ -77,8 +76,7 @@ def load_spotify_extended_minimal(
             if not track_id:
                 if track_name and artist_name:
                     track_id = (
-                        f"nk:{str(artist_name).strip().lower()}"
-                        f"||{str(track_name).strip().lower()}"
+                        f"nk:{str(artist_name).strip().lower()}||{str(track_name).strip().lower()}"
                     )
 
             if played_at is None or ms_played is None or track_id is None:
