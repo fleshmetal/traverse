@@ -13,6 +13,7 @@ export type LoadedInputs = {
   idToIndex: Map<string, number>;
   edgeToIndex: Map<string, number>;
   maxWeight: number;
+  meta: Record<string, any> | undefined;
 };
 
 function toEpochMs(v: unknown): number | null {
@@ -77,6 +78,78 @@ function edgeKey(a: string, b: string) {
   return a < b ? `${a}→${b}` : `${b}→${a}`;
 }
 
+// ── Gradient presets for edge coloring ────────────────────────────────
+export const GRADIENT_PRESETS: Record<string, [number, number, number, number][]> = {
+  plasma: [
+    [0.00,  13,   8, 135],
+    [0.33, 126,   3, 168],
+    [0.66, 204,  71, 120],
+    [1.00, 248, 149,  64],
+  ],
+  viridis: [
+    [0.00,  68,   1,  84],
+    [0.33,  59,  82, 139],
+    [0.66,  33, 144, 140],
+    [1.00, 253, 231,  37],
+  ],
+  inferno: [
+    [0.00,   0,   0,   4],
+    [0.33, 120,  28,  99],
+    [0.66, 225,  89,  50],
+    [1.00, 252, 255, 164],
+  ],
+  magma: [
+    [0.00,   0,   0,   4],
+    [0.33,  81,  18, 124],
+    [0.66, 183,  55, 121],
+    [1.00, 252, 253, 191],
+  ],
+  cool: [
+    [0.00, 110, 64, 170],
+    [0.33,  46, 135, 190],
+    [0.66,  30, 190, 165],
+    [1.00, 100, 230, 120],
+  ],
+  greyscale: [
+    [0.00,  40,  40,  40],
+    [0.33, 100, 100, 100],
+    [0.66, 170, 170, 170],
+    [1.00, 240, 240, 240],
+  ],
+};
+
+/**
+ * Pre-compute `_color` rgba strings on each raw link object using
+ * rank-based normalization so colors distribute uniformly regardless
+ * of weight skew.  Mutates the links array in place.
+ */
+export function computeLinkColors(links: any[], gradientName: string, opacity: number) {
+  const sorted = links
+    .map((l: any) => typeof l.weight === 'number' ? l.weight : 0)
+    .sort((a: number, b: number) => a - b);
+  const n = sorted.length || 1;
+  const stops = GRADIENT_PRESETS[gradientName] ?? GRADIENT_PRESETS.plasma;
+
+  for (const link of links) {
+    const w = typeof link.weight === 'number' ? link.weight : 0;
+    let lo = 0, hi = sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid] < w) lo = mid + 1; else hi = mid;
+    }
+    const t = lo / n;
+    let i = 0;
+    while (i < stops.length - 2 && stops[i + 1][0] < t) i++;
+    const [t0, r0, g0, b0] = stops[i];
+    const [t1, r1, g1, b1] = stops[i + 1];
+    const f = (t - t0) / (t1 - t0 || 1);
+    const r = Math.round(r0 + (r1 - r0) * f);
+    const g = Math.round(g0 + (g1 - g0) * f);
+    const b = Math.round(b0 + (b1 - b0) * f);
+    link._color = `rgba(${r},${g},${b},${opacity})`;
+  }
+}
+
 export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
   const resp = await fetch(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
@@ -131,17 +204,29 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
       linkTargetsBy: ['target'],
       linkIncludeColumns: [
         ...(links.some(l => typeof l.weight === 'number') ? ['weight'] : []),
+        '_color',
         ...(lkTime.has ? ['first_seen_ts'] : []),
       ],
       ...(lkTime.has ? { linkTimeBy: 'first_seen_ts' } : {}),
       ...(links.some(l => typeof l.weight === 'number') ? {
-        linkColorBy: 'weight',
+        linkColorBy: '_color',
+        linkColorStrategy: 'direct',
         linkWidthBy: 'weight',
       } : {}),
     },
     labels: { enabled: true, maxLabelCount: 10000 },
     timeline: (ptTime.has || lkTime.has) ? { enabled: true } : undefined,
   };
+
+  // Serialize nested fields to JSON strings so DuckDB-WASM can infer column types
+  for (const p of points) {
+    if (p.external_links != null && typeof p.external_links !== 'string') {
+      p.external_links = JSON.stringify(p.external_links);
+    }
+  }
+
+  // Pre-compute link colors before Arrow columnar conversion
+  computeLinkColors(links, 'plasma', 0.8);
 
   // IMPORTANT: use (config, points, links) form
   const prepared = await prepareCosmographData(dataConfig, points, links);
@@ -195,5 +280,6 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
     idToIndex,
     edgeToIndex,
     maxWeight,
+    meta,
   };
 }

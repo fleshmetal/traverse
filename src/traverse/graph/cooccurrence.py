@@ -22,6 +22,8 @@ from typing import (
     TypedDict,
 )
 
+from traverse.graph.external_links import build_external_links
+
 
 class CooccurrenceGraph(TypedDict):
     """Result of a co-occurrence build."""
@@ -189,6 +191,7 @@ class CooccurrenceBuilder:
             cat = self._resolve_category(nid)
             if cat is not None:
                 pt["category"] = cat
+            pt["external_links"] = build_external_links(pt)
             points.append(pt)
 
         # 7. Build links

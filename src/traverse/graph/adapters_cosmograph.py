@@ -86,11 +86,39 @@ class CosmographAdapter:
         *,
         indent: Union[int, None] = 2,
         meta: Optional[Dict[str, Any]] = None,
+        compact_threshold: int = 50_000,
     ) -> Path:
+        """Write graph JSON to *path*.
+
+        If the total number of points + links exceeds *compact_threshold*,
+        ``indent`` is forced to ``None`` to produce compact JSON (saves
+        30-50% file size on large graphs).
+        """
+        import sys
+
+        n_items = len(graph["points"]) + len(graph["links"])
+        if n_items > compact_threshold and indent is not None:
+            print(
+                f"Graph has {n_items:,} items — writing compact JSON "
+                f"(override with indent=None)",
+                file=sys.stderr,
+            )
+            indent = None
+
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(
             CosmographAdapter.dumps(graph, indent=indent, meta=meta),
             encoding="utf-8",
         )
+
+        size_mb = p.stat().st_size / 1_048_576
+        print(f"Wrote {p} ({size_mb:.1f} MB)", file=sys.stderr)
+        if size_mb > 200:
+            print(
+                f"WARNING: {size_mb:.0f} MB is very large for browser "
+                f"visualization. Consider reducing MAX_NODES/MAX_EDGES "
+                f"or increasing MIN_WEIGHT.",
+                file=sys.stderr,
+            )
         return p
