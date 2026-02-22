@@ -2,9 +2,24 @@
 from __future__ import annotations
 
 import json as _json
-from typing import List, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 DELIMS_DEFAULT: Tuple[str, ...] = ("|", ",", ";")
+
+# Artist names to skip — these create degenerate hub nodes in graphs
+SKIP_ARTISTS = frozenset({
+    "various",
+    "various artists",
+    "various artist",
+    "unknown",
+    "unknown artist",
+    "unknown artists",
+})
+
+
+def is_skip_artist(name: str) -> bool:
+    """Return True if *name* is a placeholder artist that should be excluded."""
+    return name.strip().lower() in SKIP_ARTISTS
 
 
 def safe_str(x: object | None) -> str:
@@ -104,6 +119,33 @@ _PRETTY_SUBS = {
     "Uk ": "UK ",
     "Dj ": "DJ ",
 }
+
+
+def matches_required_tags(
+    genres: Iterable[str],
+    styles: Iterable[str],
+    artist: str,
+    require: Dict[str, List[str]],
+) -> bool:
+    """Return True if a node passes all required-tag filters.
+
+    *require* maps category names (``"genres"``, ``"styles"``, ``"artists"``)
+    to lists of acceptable values.  A node passes a single category if it
+    contains **at least one** matching value (case-insensitive).  Multiple
+    categories are AND'd together.
+    """
+    for key, allowed in require.items():
+        allowed_lower = {v.lower() for v in allowed}
+        if key == "genres":
+            if not any(g.lower() in allowed_lower for g in genres):
+                return False
+        elif key == "styles":
+            if not any(s.lower() in allowed_lower for s in styles):
+                return False
+        elif key == "artists":
+            if artist.lower() not in allowed_lower:
+                return False
+    return True
 
 
 def pretty_label(tag: str) -> str:
