@@ -7,14 +7,16 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 DELIMS_DEFAULT: Tuple[str, ...] = ("|", ",", ";")
 
 # Artist names to skip — these create degenerate hub nodes in graphs
-SKIP_ARTISTS = frozenset({
-    "various",
-    "various artists",
-    "various artist",
-    "unknown",
-    "unknown artist",
-    "unknown artists",
-})
+SKIP_ARTISTS = frozenset(
+    {
+        "various",
+        "various artists",
+        "various artist",
+        "unknown",
+        "unknown artist",
+        "unknown artists",
+    }
+)
 
 
 def is_skip_artist(name: str) -> bool:

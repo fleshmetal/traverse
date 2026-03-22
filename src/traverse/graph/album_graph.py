@@ -23,11 +23,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from traverse.graph.cooccurrence import CooccurrenceGraph
 from traverse.graph.external_links import build_external_links
-from traverse.processing.normalize import coerce_year, is_skip_artist, matches_required_tags, pretty_label, split_tags
+from traverse.processing.normalize import (
+    coerce_year,
+    is_skip_artist,
+    matches_required_tags,
+    pretty_label,
+    split_tags,
+)
 
 
 def _detect_col(colmap: Dict[str, str], *candidates: str) -> Optional[str]:
@@ -38,7 +45,7 @@ def _detect_col(colmap: Dict[str, str], *candidates: str) -> Optional[str]:
     return None
 
 
-def _pairs_from_sorted(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def _pairs_from_sorted(arr: npt.NDArray[Any]) -> Tuple[npt.NDArray[Any], npt.NDArray[Any]]:
     """Given a sorted 1-D int32 array, return (rows, cols) for all
     upper-triangle pairs.  Uses numpy broadcasting — much faster than
     itertools.combinations for arrays up to ~2000 elements."""
@@ -50,11 +57,11 @@ def _pairs_from_sorted(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def _consolidate(
-    all_rows: List[np.ndarray],
-    all_cols: List[np.ndarray],
+    all_rows: List[npt.NDArray[Any]],
+    all_cols: List[npt.NDArray[Any]],
     min_weight: int,
     prune: bool,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
     """Concatenate batched (row, col) arrays, sum duplicate pairs via
     np.unique, and optionally prune singletons.
 
@@ -96,6 +103,7 @@ def build_album_graph(
     unweighted: bool = False,
     max_edge_weight: int = 0,
     require_tags: Optional[Dict[str, List[str]]] = None,
+    require_all_tag_types: bool = False,
     chunksize: int = 200_000,
     progress: bool = True,
 ) -> Tuple[CooccurrenceGraph, pd.DataFrame]:
@@ -139,6 +147,12 @@ def build_album_graph(
     max_edge_weight : int
         Cap edge weights at this value; 0 = unlimited.  Ignored when
         *unweighted* is True.
+    require_all_tag_types : bool
+        When True and multiple *tag_types* are specified, two nodes
+        must share at least one tag from **each** tag type to get an
+        edge (AND logic).  When False (default), sharing any tag from
+        any type suffices (OR logic).  Has no effect when only one
+        tag type is used.
     chunksize : int
         CSV read chunk size.
     progress : bool
@@ -149,6 +163,7 @@ def build_album_graph(
     use_genres = "genres" in tag_types
     use_styles = "styles" in tag_types
     use_artists = "artists" in tag_types
+    _require_all = require_all_tag_types and len(tag_types) > 1
     if unweighted:
         min_weight = 1
 
@@ -157,6 +172,10 @@ def build_album_graph(
     # ------------------------------------------------------------------
     node_meta: Dict[str, Dict[str, Any]] = {}
     node_edge_tags: Dict[str, Set[str]] = {}  # record_id → set of edge tags
+    # Per-type edge-tag sets for require_all_tag_types filtering
+    node_tags_by_type: Dict[str, Dict[str, Set[str]]] = (
+        {tt: {} for tt in tag_types} if _require_all else {}
+    )
     total_rows = 0
 
     raw_reader = pd.read_csv(
@@ -221,6 +240,15 @@ def build_album_graph(
 
             node_edge_tags[record_id] = set(edge_tags)
 
+            # Track per-type edge tags for AND filtering
+            if _require_all:
+                if use_genres and genre_tags:
+                    node_tags_by_type["genres"][record_id] = set(genre_tags)
+                if use_styles and style_tags:
+                    node_tags_by_type["styles"][record_id] = set(style_tags)
+                if use_artists and artist_tags:
+                    node_tags_by_type["artists"][record_id] = set(artist_tags)
+
             # Node metadata always includes all tag types
             node_meta[record_id] = {
                 "id": record_id,
@@ -245,7 +273,8 @@ def build_album_graph(
     if require_tags:
         before = len(node_edge_tags)
         keep_keys = [
-            k for k, meta in node_meta.items()
+            k
+            for k, meta in node_meta.items()
             if matches_required_tags(
                 [t.strip() for t in meta.get("genres", "").split("|") if t.strip()],
                 [t.strip() for t in meta.get("styles", "").split("|") if t.strip()],
@@ -256,10 +285,14 @@ def build_album_graph(
         keep = set(keep_keys)
         node_edge_tags = {k: t for k, t in node_edge_tags.items() if k in keep}
         node_meta = {k: m for k, m in node_meta.items() if k in keep}
+        if _require_all:
+            for tt in tag_types:
+                node_tags_by_type[tt] = {
+                    k: v for k, v in node_tags_by_type[tt].items() if k in keep
+                }
         n_total = len(node_edge_tags)
         print(
-            f"  require_tags filter: {before:,} → {n_total:,} albums "
-            f"(require={require_tags})",
+            f"  require_tags filter: {before:,} → {n_total:,} albums (require={require_tags})",
             file=sys.stderr,
         )
 
@@ -269,12 +302,17 @@ def build_album_graph(
     if max_nodes > 0 and n_total > max_nodes:
         ranked = sorted(
             node_edge_tags.keys(),
-            key=lambda k: len(node_edge_tags[k]),
+            key=lambda k: len(node_edge_tags[k]),  # noqa: F821
             reverse=True,
         )
         keep = set(ranked[:max_nodes])
         node_edge_tags = {k: t for k, t in node_edge_tags.items() if k in keep}
         node_meta = {k: m for k, m in node_meta.items() if k in keep}
+        if _require_all:
+            for tt in tag_types:
+                node_tags_by_type[tt] = {
+                    k: v for k, v in node_tags_by_type[tt].items() if k in keep
+                }
         print(
             f"Pass 1b: capped to {max_nodes:,} albums "
             f"(min tag count in kept set: "
@@ -287,6 +325,16 @@ def build_album_graph(
     # ------------------------------------------------------------------
     int_to_str: List[str] = sorted(node_edge_tags.keys())
     str_to_int: Dict[str, int] = {k: i for i, k in enumerate(int_to_str)}
+
+    # Build int-keyed per-type tag sets for AND filtering
+    _tags_by_type_int: Dict[str, Dict[int, Set[str]]] = {}
+    if _require_all:
+        for tt in tag_types:
+            _tags_by_type_int[tt] = {
+                str_to_int[k]: v for k, v in node_tags_by_type[tt].items() if k in str_to_int
+            }
+        del node_tags_by_type
+
     tag_to_ints: Dict[str, List[int]] = defaultdict(list)
 
     for record_id, tags in node_edge_tags.items():
@@ -298,8 +346,7 @@ def build_album_graph(
     n_records = len(int_to_str)
 
     print(
-        f"Pass 1c: {n_records:,} albums → {len(tag_to_ints):,} unique tags "
-        f"in inverted index",
+        f"Pass 1c: {n_records:,} albums → {len(tag_to_ints):,} unique tags in inverted index",
         file=sys.stderr,
     )
 
@@ -312,16 +359,16 @@ def build_album_graph(
     # This keeps peak memory bounded regardless of graph scale.
     # ------------------------------------------------------------------
     BATCH_CAP = 30_000_000  # consolidate every ~30M raw pairs (~240 MB)
-    batch_rows: List[np.ndarray] = []
-    batch_cols: List[np.ndarray] = []
+    batch_rows: List[npt.NDArray[Any]] = []
+    batch_cols: List[npt.NDArray[Any]] = []
     batch_size = 0
     skipped_tags = 0
     sampled_tags = 0
 
     # Accumulated unique edges from prior consolidations
-    acc_rows = np.empty(0, dtype=np.int32)
-    acc_cols = np.empty(0, dtype=np.int32)
-    acc_weights = np.empty(0, dtype=np.int32)
+    acc_rows: npt.NDArray[Any] = np.empty(0, dtype=np.int32)
+    acc_cols: npt.NDArray[Any] = np.empty(0, dtype=np.int32)
+    acc_weights: npt.NDArray[Any] = np.empty(0, dtype=np.int32)
     consolidation_count = 0
 
     tag_items: Any = tag_to_ints.items()
@@ -329,9 +376,7 @@ def build_album_graph(
         try:
             from tqdm import tqdm
 
-            tag_items = tqdm(
-                tag_items, total=len(tag_to_ints), desc="Building edges", unit="tag"
-            )
+            tag_items = tqdm(tag_items, total=len(tag_to_ints), desc="Building edges", unit="tag")
         except ImportError:
             pass
 
@@ -381,7 +426,9 @@ def build_album_graph(
                     m_cols = np.concatenate([acc_cols, b_c])
                     m_weights = np.concatenate([acc_weights, b_w])
 
-                    packed = m_rows.astype(np.int64) * np.int64(2_200_000_000) + m_cols.astype(np.int64)
+                    packed = m_rows.astype(np.int64) * np.int64(2_200_000_000) + m_cols.astype(
+                        np.int64
+                    )
                     order = np.argsort(packed)
                     packed = packed[order]
                     m_weights = m_weights[order]
@@ -398,9 +445,9 @@ def build_album_graph(
 
                     # Prune singletons
                     if not unweighted and min_weight >= 2:
-                        keep = summed_weights >= 2
-                        unique_packed = unique_packed[keep]
-                        summed_weights = summed_weights[keep]
+                        prune_mask = summed_weights >= 2
+                        unique_packed = unique_packed[prune_mask]
+                        summed_weights = summed_weights[prune_mask]
 
                     acc_rows = (unique_packed // np.int64(2_200_000_000)).astype(np.int32)
                     acc_cols = (unique_packed % np.int64(2_200_000_000)).astype(np.int32)
@@ -414,8 +461,7 @@ def build_album_graph(
 
             consolidation_count += 1
             print(
-                f"  consolidated #{consolidation_count}: "
-                f"{len(acc_rows):,} unique edges",
+                f"  consolidated #{consolidation_count}: {len(acc_rows):,} unique edges",
                 file=sys.stderr,
             )
             batch_rows = []
@@ -425,9 +471,7 @@ def build_album_graph(
     # Final consolidation of remaining batch
     if batch_size > 0 or len(acc_rows) > 0:
         if len(acc_rows) > 0 and batch_size > 0:
-            b_r, b_c, b_w = _consolidate(
-                batch_rows, batch_cols, min_weight, prune=not unweighted
-            )
+            b_r, b_c, b_w = _consolidate(batch_rows, batch_cols, min_weight, prune=not unweighted)
             if len(b_r) > 0:
                 m_rows = np.concatenate([acc_rows, b_r])
                 m_cols = np.concatenate([acc_cols, b_c])
@@ -463,6 +507,31 @@ def build_album_graph(
         f"{skipped_tags} tags skipped (degree > {max_tag_degree})",
         file=sys.stderr,
     )
+
+    # ------------------------------------------------------------------
+    # Pass 2+: AND filter — require shared tags in every tag type
+    # ------------------------------------------------------------------
+    if _require_all and len(acc_rows) > 0:
+        before_and = len(acc_rows)
+        keep_mask: npt.NDArray[Any] = np.ones(len(acc_rows), dtype=np.bool_)
+        for i in range(len(acc_rows)):
+            a, b = int(acc_rows[i]), int(acc_cols[i])
+            for tt in tag_types:
+                a_tags = _tags_by_type_int.get(tt, {}).get(a, set())
+                b_tags = _tags_by_type_int.get(tt, {}).get(b, set())
+                if not a_tags or not b_tags or a_tags.isdisjoint(b_tags):
+                    keep_mask[i] = False
+                    break
+        acc_rows = acc_rows[keep_mask]
+        acc_cols = acc_cols[keep_mask]
+        acc_weights = acc_weights[keep_mask]
+        print(
+            f"  require_all_tag_types filter: {before_and:,} → {len(acc_rows):,} edges",
+            file=sys.stderr,
+        )
+
+    if _require_all:
+        _tags_by_type_int.clear()
 
     # ------------------------------------------------------------------
     # Pass 3: Threshold, cap, build output

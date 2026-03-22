@@ -19,10 +19,6 @@ interface SavedCommunity {
   savedAt: number;
 }
 
-const CLUSTER_PALETTE = [
-  '#00e5ff', '#ff4081', '#76ff03', '#ffea00', '#e040fb', '#ff6e40',
-];
-
 /** Generate a random HSL color with good saturation and visibility. */
 function randomVisibleColor(): string {
   const h = Math.floor(Math.random() * 360);
@@ -33,6 +29,31 @@ function randomVisibleColor(): string {
 
 const UNKNOWN_COLOR = 'rgba(205, 207, 213, 0.9)';
 const DIM_COLOR = 'rgba(138, 138, 138, 0.2)';
+
+/** Plasma colormap: t=0 → dark purple (homogeneous), t=1 → bright yellow (diverse). */
+function plasmaColor(t: number): string {
+  // Plasma LUT – 9 stops sampled from matplotlib's plasma colormap
+  const stops: [number, number, number][] = [
+    [13, 8, 135],    // 0.000
+    [75, 3, 161],    // 0.125
+    [126, 3, 168],   // 0.250
+    [168, 34, 150],  // 0.375
+    [203, 70, 121],  // 0.500
+    [229, 107, 93],  // 0.625
+    [248, 148, 65],  // 0.750
+    [253, 195, 40],  // 0.875
+    [240, 249, 33],  // 1.000
+  ];
+  const tc = Math.max(0, Math.min(1, t));
+  const idx = tc * (stops.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.min(lo + 1, stops.length - 1);
+  const f = idx - lo;
+  const r = Math.round(stops[lo][0] + (stops[hi][0] - stops[lo][0]) * f);
+  const g = Math.round(stops[lo][1] + (stops[hi][1] - stops[lo][1]) * f);
+  const b = Math.round(stops[lo][2] + (stops[hi][2] - stops[lo][2]) * f);
+  return `rgb(${r},${g},${b})`;
+}
 
 const LOADING_MESSAGES = [
   'Digging through the crates...',
@@ -90,6 +111,14 @@ interface SavedEdge {
   score: number;
   algorithm: string;
   savedAt: number;
+}
+
+interface PathResult {
+  nodes: string[];
+  labels: string[];
+  length: number;
+  totalWeight: number;
+  pathType: 'shortest' | 'diverse_longest';
 }
 
 // ── Panel resize hook (vertical + horizontal) ─────────────────────────────
@@ -211,13 +240,16 @@ export default function App() {
   const [cfg, setCfg] = useState<CosmographConfig | null>(null);
   const [labelsOn, setLabelsOn] = useState(true);
   const [clusterOn, setClusterOn] = useState(false);
+  const [colorCommunities, setColorCommunities] = useState(false);
+  const [homogeneityMode, setHomogeneityMode] = useState(false);
+  const [recolorKick, setRecolorKick] = useState(0);
   const [status, setStatus] = useState('Loading…');
 
   const cosmoRef = useRef<CosmographInstance | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
 
   // Toolbar state
-  type ToolId = 'clustering' | 'communities' | 'edges' | 'detail' | 'corrections' | 'customize' | 'search' | 'selection';
+  type ToolId = 'clustering' | 'communities' | 'edges' | 'paths' | 'detail' | 'corrections' | 'customize' | 'search' | 'selection' | 'overlap';
   const [toolbarOpen, setToolbarOpen] = useState(true);
   const [openTools, setOpenTools] = useState<Set<ToolId>>(new Set(['detail']));
 
@@ -273,6 +305,15 @@ export default function App() {
   const [edgeDetailB, setEdgeDetailB] = useState<{ label: string; tracks: any[]; totalPlays: number } | null>(null);
   const [loadingEdgeDetail, setLoadingEdgeDetail] = useState(false);
 
+  // Path finding state
+  const [pathCommunityA, setPathCommunityA] = useState<string | null>(null);
+  const [pathCommunityB, setPathCommunityB] = useState<string | null>(null);
+  const [pathRestrict, setPathRestrict] = useState(false);
+  const [pathResults, setPathResults] = useState<PathResult[]>([]);
+  const [pathLoading, setPathLoading] = useState(false);
+  const [pathError, setPathError] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<PathResult | null>(null);
+
   // Track context menu state
   const [trackContextMenu, setTrackContextMenu] = useState<{
     x: number; y: number;
@@ -310,6 +351,22 @@ export default function App() {
   const lassoActiveRef = useRef(false);
   const lassoPointsRef = useRef<[number, number][]>([]);
 
+  // User listening overlap state
+  interface OverlapMatch {
+    nodeId: string; playCount: number; totalMs: number;
+    firstListenEpochMs?: number; lastListenEpochMs?: number;
+    topTracks: { trackName: string; playCount: number; totalMs: number }[];
+  }
+  const [overlapMatches, setOverlapMatches] = useState<Map<string, OverlapMatch> | null>(null);
+  const [overlapMode, setOverlapMode] = useState<'dim' | 'hide'>('dim');
+  const [overlapOpacity, setOverlapOpacity] = useState(0.225);
+  const [overlapColorize, setOverlapColorize] = useState(false);
+  const [overlapLoading, setOverlapLoading] = useState(false);
+  const [overlapError, setOverlapError] = useState<string | null>(null);
+  const [overlapSummary, setOverlapSummary] = useState<{ matched: number; total: number } | null>(null);
+  const [overlapInputMode, setOverlapInputMode] = useState<'path' | 'upload'>('path');
+  const [overlapPath, setOverlapPath] = useState('');
+
   // Stable random colors for communities (survives re-renders, cleared on re-cluster)
   const generatedColorsRef = useRef(new Map<string, string>());
 
@@ -336,9 +393,12 @@ export default function App() {
     return () => clearInterval(id);
   }, [loadingTracks, loadingEdgeDetail, loadingAlbumTracks]);
 
+  // (Overlap edge visibility is handled by selectPoints + linkGreyoutOpacity)
+
   // Drag handles for movable panels
   const clusterDrag = useDrag();
   const communityDrag = useDrag();
+  const nodeListDrag = useDrag();
   const genreDrag = useDrag();
   const edgeDrag = useDrag();
   const correctionsDrag = useDrag();
@@ -346,15 +406,20 @@ export default function App() {
   const customizeDrag = useDrag();
   const searchDrag = useDrag();
   const selectionDrag = useDrag();
+  const pathsDrag = useDrag();
+  const overlapDrag = useDrag();
 
   // Panel resize handles (vertical + horizontal)
   const clusterResize = usePanelResize();
   const communityResize = usePanelResize();
+  const nodeListResize = usePanelResize();
   const edgeResize = usePanelResize();
   const genreResize = usePanelResize();
   const correctionsResize = usePanelResize();
   const customizeResize = usePanelResize();
   const searchResize = usePanelResize();
+  const pathsResize = usePanelResize();
+  const overlapResize = usePanelResize();
 
   // Build color map: cluster value → color (custom overrides > stable random)
   const clusterColorMap = useMemo(() => {
@@ -397,6 +462,36 @@ export default function App() {
       styles: [...styleCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30),
     };
   }, [loaded, selectedCluster]);
+
+  // Compute style homogeneity (normalized Shannon entropy) per community
+  const homogeneityMap = useMemo(() => {
+    if (!loaded?.hasCluster) return null;
+    const map = new Map<string, number>();
+    for (const [key, group] of loaded.clusterGroups.entries()) {
+      const styleCounts = new Map<string, number>();
+      let totalTags = 0;
+      for (const idx of group.indices) {
+        const p = loaded.raw.points[idx];
+        if (!p) continue;
+        const raw = typeof p.styles === 'string' ? p.styles : '';
+        if (!raw) continue;
+        const tags = raw.split(/[|\s]*\|\s*|,\s*/).map((s: string) => s.trim()).filter(Boolean);
+        for (const t of tags) {
+          styleCounts.set(t, (styleCounts.get(t) ?? 0) + 1);
+          totalTags++;
+        }
+      }
+      const n = styleCounts.size;
+      if (n <= 1) { map.set(key, 0); continue; }
+      let h = 0;
+      for (const count of styleCounts.values()) {
+        const p = count / totalTags;
+        h -= p * Math.log(p);
+      }
+      map.set(key, h / Math.log(n)); // normalized entropy [0..1]
+    }
+    return map;
+  }, [loaded]);
 
   // Search: filter points by query against label, artist, genres, styles
   const searchResults = useMemo(() => {
@@ -454,6 +549,10 @@ export default function App() {
 
         setLoaded(inputs);
         setCfg(base);
+        if (inputs.hasCluster) {
+          setColorCommunities(true);
+          setTimeout(() => setRecolorKick(k => k + 1), 80);
+        }
         setStatus('Ready');
 
         // Restore persisted community names and saved communities
@@ -490,6 +589,7 @@ export default function App() {
           simulationCluster: 0.8,
           showClusterLabels: true,
           pointColorBy: loaded.clusterField ?? undefined,
+          pointColorStrategy: undefined,
         };
       }
       return {
@@ -500,6 +600,59 @@ export default function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clusterOn]);
+
+  // Re-bake _pointColor into data when community colors change (custom overrides)
+  useEffect(() => {
+    if (!loaded?.hasCluster || !clusterColorMap || !clusterOn) return;
+    const clusterField = loaded.clusterField;
+    if (!clusterField) return;
+    const points = loaded.raw.points;
+    const links = loaded.raw.links;
+
+    const coloredPoints = points.map(p => {
+      const key = p[clusterField] != null ? String(p[clusterField]) : undefined;
+      return { ...p, _pointColor: key ? (clusterColorMap.get(key) ?? UNKNOWN_COLOR) : UNKNOWN_COLOR };
+    });
+
+    const pointIncludeCols = ['label', clusterField, '_pointColor'];
+    const dataConfig: any = {
+      points: {
+        pointIdBy: 'id',
+        pointLabelBy: 'label',
+        pointIncludeColumns: pointIncludeCols,
+        ...(loaded.hasPointTime ? { pointTimeBy: 'first_seen_ts' } : {}),
+        pointClusterBy: clusterField,
+        pointColorBy: '_pointColor',
+        pointColorStrategy: 'direct',
+      },
+      links: {
+        linkSourceBy: 'source',
+        linkTargetsBy: ['target'],
+        linkIncludeColumns: [
+          ...(links.some((l: any) => typeof l.weight === 'number') ? ['weight'] : []),
+          '_color',
+          ...(loaded.hasLinkTime ? ['first_seen_ts'] : []),
+        ],
+        ...(loaded.hasLinkTime ? { linkTimeBy: 'first_seen_ts' } : {}),
+        ...(links.some((l: any) => typeof l.weight === 'number') ? {
+          linkColorBy: '_color',
+          linkColorStrategy: 'direct',
+          linkWidthBy: 'weight',
+        } : {}),
+      },
+      labels: { enabled: true, maxLabelCount: 10000 },
+      timeline: (loaded.hasPointTime || loaded.hasLinkTime) ? { enabled: true } : undefined,
+    };
+
+    prepareCosmographData(dataConfig, coloredPoints, links).then(prepared => {
+      setCfg(prev => prev ? {
+        ...prev,
+        points: prepared?.points,
+        links: prepared?.links,
+      } : prev);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clusterColorMap]);
 
   // Persist community names to localStorage
   useEffect(() => {
@@ -537,6 +690,15 @@ export default function App() {
     const hasCluster = loaded.hasCluster;
     const pointIncludeCols = ['label'];
     if (hasCluster && clusterField) pointIncludeCols.push(clusterField);
+    if (hasCluster) pointIncludeCols.push('_pointColor');
+
+    // Re-bake _pointColor if clusters exist
+    const prepPoints = (hasCluster && clusterField)
+      ? points.map(p => {
+          const key = p[clusterField] != null ? String(p[clusterField]) : undefined;
+          return { ...p, _pointColor: key ? (generatedColorsRef.current.get(key) ?? UNKNOWN_COLOR) : UNKNOWN_COLOR };
+        })
+      : points;
 
     const dataConfig: any = {
       points: {
@@ -546,9 +708,8 @@ export default function App() {
         ...(loaded.hasPointTime ? { pointTimeBy: 'first_seen_ts' } : {}),
         ...(hasCluster && clusterField ? {
           pointClusterBy: clusterField,
-          pointColorBy: clusterField,
-          pointColorStrategy: 'categorical',
-          pointColorPalette: CLUSTER_PALETTE,
+          pointColorBy: '_pointColor',
+          pointColorStrategy: 'direct',
         } : {}),
       },
       links: {
@@ -570,7 +731,7 @@ export default function App() {
       timeline: (loaded.hasPointTime || loaded.hasLinkTime) ? { enabled: true } : undefined,
     };
 
-    prepareCosmographData(dataConfig, points, links).then(prepared => {
+    prepareCosmographData(dataConfig, prepPoints, links).then(prepared => {
       setCfg(prev => prev ? {
         ...prev,
         points: prepared?.points,
@@ -1027,60 +1188,143 @@ export default function App() {
       onLabelClick: onGraphLabelClick,
     };
 
-    // Edge selected → highlight the two endpoints, dim everything else
-    if (selectedEdge && loaded) {
-      const edgeNodeIds = [selectedEdge.source, selectedEdge.target];
+    // Path selected → highlight path nodes, dim everything else
+    if (selectedPath && loaded) {
+      const pathSet = new Set(selectedPath.nodes);
       return {
         ...base,
         pointGreyoutOpacity: 0.1,
         linkGreyoutOpacity: 0.08,
         selectedPointRingColor: '#ffffff',
         showLabels: true,
-        showDynamicLabels: false,
-        showTopLabels: false,
-        showLabelsFor: edgeNodeIds,
+        showDynamicLabels: true,
+        showTopLabels: true,
+        pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
+          pointId != null && pathSet.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
+      };
+    }
+
+    // Edge selected → highlight the two endpoints, dim everything else
+    if (selectedEdge && loaded) {
+      const edgeSet = new Set([selectedEdge.source, selectedEdge.target]);
+      return {
+        ...base,
+        pointGreyoutOpacity: 0.1,
+        linkGreyoutOpacity: 0.08,
+        selectedPointRingColor: '#ffffff',
+        showLabels: true,
+        showDynamicLabels: true,
+        showTopLabels: true,
+        pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
+          pointId != null && edgeSet.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
+      };
+    }
+
+    // Overlap mode → plasma gradient by listen intensity, dim/hide unmatched
+    if (overlapMatches && overlapMatches.size > 0 && overlapColorize) {
+      // Compute max play count for normalization (log scale for better spread)
+      let maxPlays = 1;
+      for (const m of overlapMatches.values()) {
+        if (m.playCount > maxPlays) maxPlays = m.playCount;
+      }
+      const logMax = Math.log1p(maxPlays);
+      return {
+        ...base,
+        pointGreyoutOpacity: overlapOpacity,
+        linkGreyoutOpacity: Math.max(0.05, overlapOpacity - 0.02),
+        pointColorBy: 'id',
+        pointColorStrategy: undefined,
+        pointColorByFn: (value: any) => {
+          const m = overlapMatches.get(String(value ?? ''));
+          if (m) return plasmaColor(Math.log1p(m.playCount) / logMax);
+          return overlapMode === 'hide' ? 'rgba(0,0,0,0)' : DIM_COLOR;
+        },
+        pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
+          pointId && overlapMatches.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
+        ...(overlapMode === 'hide' ? {
+          pointSizeByFn: (_val: any, _idx: number, pointId?: string) =>
+            pointId && overlapMatches.has(String(pointId)) ? undefined : 0,
+        } : {}),
+        showLabels: true,
+        showDynamicLabels: true,
+        showTopLabels: true,
       };
     }
 
     if (!loaded?.hasCluster || !loaded?.clusterField || !clusterColorMap) return base;
 
+    // Homogeneity mode → plasma gradient by community style entropy
+    // Purple (homogeneous) → yellow (diverse)
+    if (homogeneityMode && homogeneityMap) {
+      return {
+        ...base,
+        pointColorBy: loaded.clusterField,
+        pointColorStrategy: undefined,
+        pointColorByFn: (value: any) => {
+          const t = homogeneityMap.get(String(value ?? '')) ?? 0;
+          return plasmaColor(t);
+        },
+      };
+    }
+
     if (selectedCluster != null) {
       // Cluster selected → highlight it, dim others, show only selected labels
       const selColor = clusterColorMap.get(selectedCluster) ?? '#ffffff';
+      const selectedSet = selectedPointIds ? new Set(selectedPointIds) : new Set<string>();
       return {
         ...base,
         pointColorBy: loaded.clusterField,
         pointColorStrategy: undefined,
         pointColorByFn: (value: any) =>
           String(value ?? '') === selectedCluster ? selColor : DIM_COLOR,
-        // Disable auto label placement, show only selected cluster's labels
+        // Use pointLabelClassName to hide non-selected labels (persists through drag/zoom)
         showLabels: true,
-        showDynamicLabels: false,
-        showTopLabels: false,
-        showLabelsFor: selectedPointIds,
+        showDynamicLabels: true,
+        showTopLabels: true,
+        pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
+          pointId != null && selectedSet.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
       };
     }
 
-    if (!clusterOn) return base; // clustering toggled off, no custom coloring
+    if (!colorCommunities) return base;
 
-    // No selection, clustering on → use our own color map so panel dots match exactly
+    // No selection, coloring on → apply our color map using same pattern as homogeneity
     return {
       ...base,
+      pointColorBy: loaded.clusterField,
       pointColorStrategy: undefined,
       pointColorByFn: (value: any) =>
         clusterColorMap.get(String(value ?? '')) ?? UNKNOWN_COLOR,
     };
-  }, [cfg, loaded, selectedCluster, selectedEdge, clusterColorMap, clusterOn, selectedPointIds, onGraphClick, onGraphLabelClick]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg, loaded, selectedCluster, selectedEdge, selectedPath, clusterColorMap, clusterOn, colorCommunities, selectedPointIds, onGraphClick, onGraphLabelClick, homogeneityMode, homogeneityMap, recolorKick, overlapMatches, overlapMode, overlapOpacity, overlapColorize]);
 
   // Imperative selectPoints for Cosmograph's internal selection state
   useEffect(() => {
     const inst = cosmoRef.current;
     if (!inst || !loaded) return;
 
+    // Path selection takes priority
+    if (selectedPath) {
+      inst.getPointIndicesByIds(selectedPath.nodes).then((indices: number[] | undefined) => {
+        if (indices && indices.length > 0) inst.selectPoints(indices);
+      });
+      return;
+    }
+
     // Edge selection takes priority
     if (selectedEdge) {
       const edgePointIds = [selectedEdge.source, selectedEdge.target];
       inst.getPointIndicesByIds(edgePointIds).then((indices: number[] | undefined) => {
+        if (indices && indices.length > 0) inst.selectPoints(indices);
+      });
+      return;
+    }
+
+    // Overlap heatmap → select matched nodes so Cosmograph greys out the rest
+    if (overlapMatches && overlapMatches.size > 0 && overlapColorize) {
+      const matchedIds = Array.from(overlapMatches.keys());
+      inst.getPointIndicesByIds(matchedIds).then((indices: number[] | undefined) => {
         if (indices && indices.length > 0) inst.selectPoints(indices);
       });
       return;
@@ -1103,7 +1347,8 @@ export default function App() {
     inst.getPointIndicesByIds(pointIds).then((indices: number[] | undefined) => {
       if (indices && indices.length > 0) inst.selectPoints(indices);
     });
-  }, [loaded, selectedCluster, selectedEdge]);
+  }, [loaded, selectedCluster, selectedEdge, selectedPath, overlapMatches, overlapColorize]);
+
 
   // ── Apply clustering from server ────────────────────────────────
   const handleApplyClustering = useCallback(async () => {
@@ -1145,6 +1390,30 @@ export default function App() {
       });
       const links = loaded.raw.links;
 
+      // Build cluster groups first so we can generate colors before data prep
+      const tmp0 = new Map<string, number[]>();
+      newPoints.forEach((p, i) => {
+        const val = p[clusterField];
+        if (val == null) return;
+        const key = String(val);
+        let arr = tmp0.get(key);
+        if (!arr) { arr = []; tmp0.set(key, arr); }
+        arr.push(i);
+      });
+
+      // Generate stable colors for each community, store in ref so
+      // clusterColorMap useMemo produces the same colors later.
+      generatedColorsRef.current.clear();
+      for (const key of tmp0.keys()) {
+        generatedColorsRef.current.set(key, randomVisibleColor());
+      }
+
+      // Bake _pointColor into every point so Cosmograph renders our exact colors
+      const coloredPoints = newPoints.map(p => {
+        const key = p[clusterField] != null ? String(p[clusterField]) : undefined;
+        return { ...p, _pointColor: key ? (generatedColorsRef.current.get(key) ?? UNKNOWN_COLOR) : UNKNOWN_COLOR };
+      });
+
       // Re-prepare data so Cosmograph sees updated cluster values in
       // its internal columnar store — this drives both coloring and
       // the physics clustering force.
@@ -1152,12 +1421,11 @@ export default function App() {
         points: {
           pointIdBy: 'id',
           pointLabelBy: 'label',
-          pointIncludeColumns: ['label', clusterField],
+          pointIncludeColumns: ['label', clusterField, '_pointColor'],
           ...(loaded.hasPointTime ? { pointTimeBy: 'first_seen_ts' } : {}),
           pointClusterBy: clusterField,
-          pointColorBy: clusterField,
-          pointColorStrategy: 'categorical',
-          pointColorPalette: CLUSTER_PALETTE,
+          pointColorBy: '_pointColor',
+          pointColorStrategy: 'direct',
         },
         links: {
           linkSourceBy: 'source',
@@ -1179,28 +1447,20 @@ export default function App() {
       };
 
       computeLinkColors(links, edgeGradient, edgeOpacity);
-      const prepared = await prepareCosmographData(dataConfig, newPoints, links);
+      const prepared = await prepareCosmographData(dataConfig, coloredPoints, links);
 
-      // Rebuild cluster groups
-      const tmp = new Map<string, number[]>();
-      newPoints.forEach((p, i) => {
-        const val = p[clusterField];
-        if (val == null) return;
-        const key = String(val);
-        let arr = tmp.get(key);
-        if (!arr) { arr = []; tmp.set(key, arr); }
-        arr.push(i);
-      });
-      const sorted = [...tmp.entries()].sort((a, b) => b[1].length - a[1].length);
+      // Use the groups we already built (tmp0)
+      const sorted = [...tmp0.entries()].sort((a, b) => b[1].length - a[1].length);
       const newGroups = new Map<string, ClusterGroup>();
       for (const [key, indices] of sorted) {
         newGroups.set(key, { count: indices.length, indices });
       }
 
-      // Update loaded state with new cluster info
+      // Update loaded state with new cluster info (store coloredPoints so
+      // downstream re-prepares can re-bake _pointColor)
       setLoaded(prev => prev ? {
         ...prev,
-        raw: { ...prev.raw, points: newPoints },
+        raw: { ...prev.raw, points: coloredPoints },
         hasCluster: true,
         clusterField,
         clusterGroups: newGroups,
@@ -1225,10 +1485,14 @@ export default function App() {
       });
 
       setClusterOn(true);
+      setColorCommunities(true);
       setSelectedCluster(null);
 
-      // Clear stale community names/saved/colors from previous clustering
-      generatedColorsRef.current.clear();
+      // Delayed recolor kick — forces finalCfg to recompute pointColorByFn
+      // in a SEPARATE render frame after Cosmograph finishes loading data.
+      setTimeout(() => setRecolorKick(k => k + 1), 80);
+
+      // Clear stale community names/saved/colors (colors already in ref above)
       setCommunityNames(new Map());
       setSavedCommunities([]);
       localStorage.removeItem(`traverse:communityNames:${dataUrl}`);
@@ -1324,6 +1588,74 @@ export default function App() {
     }
   }, [loaded, selectedCluster, edgeAlgo, dataUrl]);
 
+  // ── Path finding ──────────────────────────────────────────────────
+  const handleFindPaths = useCallback(async () => {
+    if (!loaded || !pathCommunityA || !pathCommunityB || pathCommunityA === pathCommunityB) return;
+
+    const groupA = loaded.clusterGroups.get(pathCommunityA);
+    const groupB = loaded.clusterGroups.get(pathCommunityB);
+    if (!groupA || !groupB) return;
+
+    setPathLoading(true);
+    setPathError(null);
+    setPathResults([]);
+    setSelectedPath(null);
+
+    const communityAIds = groupA.indices
+      .map(i => loaded.raw.points[i]?.id)
+      .filter((id: any): id is string => id != null)
+      .map(String);
+    const communityBIds = groupB.indices
+      .map(i => loaded.raw.points[i]?.id)
+      .filter((id: any): id is string => id != null)
+      .map(String);
+
+    const dataFile = dataUrl.replace(/^\//, '');
+
+    try {
+      const resp = await fetch('/api/paths', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dataFile,
+          communityAIds,
+          communityBIds,
+          restrictToCommunities: pathRestrict,
+          maxDiverseAttempts: 200,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) {
+        setPathError(result.error ?? `Server error ${resp.status}`);
+        return;
+      }
+      if (result.pathCount === 0) {
+        setPathError(result.message ?? 'No path found');
+      } else {
+        setPathResults(result.paths ?? []);
+      }
+    } catch (e: any) {
+      setPathError(e?.message ?? 'Network error');
+    } finally {
+      setPathLoading(false);
+    }
+  }, [loaded, pathCommunityA, pathCommunityB, pathRestrict, dataUrl]);
+
+  const handlePathSelect = useCallback((path: PathResult | null) => {
+    if (!path || selectedPath === path) {
+      setSelectedPath(null);
+      return;
+    }
+    setSelectedPath(path);
+    // Clear other selections
+    setSelectedGenre(null);
+    setSelectedAlbum(null);
+    setSelectedEdge(null);
+    setEdgeDetailA(null);
+    setEdgeDetailB(null);
+    setSelectedCluster(null);
+  }, [selectedPath]);
+
   // Dismiss context menu on click/Escape/scroll
   useEffect(() => {
     if (!contextMenu) return;
@@ -1400,17 +1732,22 @@ export default function App() {
       nodeSet.has(String(l.source)) && nodeSet.has(String(l.target))
     );
 
+    // Re-bake _pointColor from current clusterColorMap before re-preparing
+    const coloredFiltered = filteredPoints.map(p => {
+      const key = p[clusterField] != null ? String(p[clusterField]) : undefined;
+      return { ...p, _pointColor: key ? (generatedColorsRef.current.get(key) ?? UNKNOWN_COLOR) : UNKNOWN_COLOR };
+    });
+
     // Re-prepare data
     const dataConfig: any = {
       points: {
         pointIdBy: 'id',
         pointLabelBy: 'label',
-        pointIncludeColumns: ['label', clusterField],
+        pointIncludeColumns: ['label', clusterField, '_pointColor'],
         ...(loaded.hasPointTime ? { pointTimeBy: 'first_seen_ts' } : {}),
         pointClusterBy: clusterField,
-        pointColorBy: clusterField,
-        pointColorStrategy: 'categorical',
-        pointColorPalette: CLUSTER_PALETTE,
+        pointColorBy: '_pointColor',
+        pointColorStrategy: 'direct',
       },
       links: {
         linkSourceBy: 'source',
@@ -1432,7 +1769,7 @@ export default function App() {
     };
 
     computeLinkColors(filteredLinks, edgeGradient, edgeOpacity);
-    const prepared = await prepareCosmographData(dataConfig, filteredPoints, filteredLinks);
+    const prepared = await prepareCosmographData(dataConfig, coloredFiltered, filteredLinks);
 
     // Rebuild cluster groups from filtered points
     const tmp = new Map<string, number[]>();
@@ -1477,6 +1814,7 @@ export default function App() {
     setFocusedCluster(clusterValue);
     setSelectedCluster(null);
     setContextMenu(null);
+    setTimeout(() => setRecolorKick(k => k + 1), 80);
   }, [loaded, fullData, edgeGradient, edgeOpacity]);
 
   // Restore the full graph from saved data
@@ -1485,16 +1823,21 @@ export default function App() {
 
     const clusterField = loaded.clusterField ?? 'community';
 
+    // Re-bake _pointColor from current colors
+    const coloredFull = fullData.points.map(p => {
+      const key = p[clusterField] != null ? String(p[clusterField]) : undefined;
+      return { ...p, _pointColor: key ? (generatedColorsRef.current.get(key) ?? UNKNOWN_COLOR) : UNKNOWN_COLOR };
+    });
+
     const dataConfig: any = {
       points: {
         pointIdBy: 'id',
         pointLabelBy: 'label',
-        pointIncludeColumns: ['label', clusterField],
+        pointIncludeColumns: ['label', clusterField, '_pointColor'],
         ...(loaded.hasPointTime ? { pointTimeBy: 'first_seen_ts' } : {}),
         pointClusterBy: clusterField,
-        pointColorBy: clusterField,
-        pointColorStrategy: 'categorical',
-        pointColorPalette: CLUSTER_PALETTE,
+        pointColorBy: '_pointColor',
+        pointColorStrategy: 'direct',
       },
       links: {
         linkSourceBy: 'source',
@@ -1516,7 +1859,7 @@ export default function App() {
     };
 
     computeLinkColors(fullData.links, edgeGradient, edgeOpacity);
-    const prepared = await prepareCosmographData(dataConfig, fullData.points, fullData.links);
+    const prepared = await prepareCosmographData(dataConfig, coloredFull, fullData.links);
 
     // Rebuild cluster groups
     const tmp = new Map<string, number[]>();
@@ -1561,6 +1904,7 @@ export default function App() {
     setFocusedCluster(null);
     setFullData(null);
     setSelectedCluster(null);
+    setTimeout(() => setRecolorKick(k => k + 1), 80);
   }, [loaded, fullData, edgeGradient, edgeOpacity]);
 
 
@@ -1662,6 +2006,10 @@ export default function App() {
                           onClick={() => toggleTool('search')} title="Search">&#8981;</button>
                   <button className={`toolbar-btn ${openTools.has('selection') ? 'active' : ''}`}
                           onClick={() => toggleTool('selection')} title="Selection">&#11034;</button>
+                  <button className={`toolbar-btn ${openTools.has('paths') ? 'active' : ''}`}
+                          onClick={() => toggleTool('paths')} title="Neighborhood Paths">&#10548;</button>
+                  <button className={`toolbar-btn ${openTools.has('overlap') ? 'active' : ''}`}
+                          onClick={() => toggleTool('overlap')} title="My Listening">&#9835;</button>
                   <button className={`toolbar-btn ${openTools.has('customize') ? 'active' : ''}`}
                           style={{ marginTop: 'auto' }}
                           onClick={() => toggleTool('customize')} title="Customize">&#9881;</button>
@@ -1755,6 +2103,23 @@ export default function App() {
                       Clear selection
                     </button>
                   )}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, opacity: 0.85, margin: '4px 0 2px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={colorCommunities}
+                      onChange={e => { setColorCommunities(e.target.checked); setTimeout(() => setRecolorKick(k => k + 1), 80); }}
+                    />
+                    Color communities
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, opacity: 0.85, margin: '2px 0 6px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={homogeneityMode}
+                      onChange={e => setHomogeneityMode(e.target.checked)}
+                    />
+                    Style homogeneity
+                    <span style={{ fontSize: 10, opacity: 0.6 }} title="Purple = uniform styles, Yellow = diverse">(purple→yellow)</span>
+                  </label>
                   <ul className="community-list">
                     {[...loaded.clusterGroups.entries()].map(([value, group]) => (
                       <li
@@ -1768,7 +2133,9 @@ export default function App() {
                       >
                         <span
                           className="community-dot"
-                          style={{ background: clusterColorMap?.get(value) ?? UNKNOWN_COLOR }}
+                          style={{ background: homogeneityMode
+                            ? plasmaColor(homogeneityMap?.get(value) ?? 0)
+                            : clusterColorMap?.get(value) ?? UNKNOWN_COLOR }}
                         />
                         {renamingCluster === value ? (
                           <input
@@ -1790,30 +2157,6 @@ export default function App() {
                       </li>
                     ))}
                   </ul>
-                  {selectedNodes && (
-                    <div className="community-node-list">
-                      <div className="community-node-list-header">
-                        Nodes in community {getDisplayName(selectedCluster!)} ({selectedNodes.length})
-                      </div>
-                      <ul className="community-node-list-items">
-                        {selectedNodes.map(n => (
-                          <li
-                            key={n.id}
-                            className="community-node-item"
-                            onClick={(e) => { e.stopPropagation(); handleGenreClick(n.label); }}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const idx = loaded?.idToIndex.get(String(n.id)) ?? -1;
-                              if (idx >= 0) setNodeContextMenu({ x: e.clientX, y: e.clientY, pointIndex: idx, label: n.label });
-                            }}
-                          >
-                            {n.label}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                   {savedCommunities.length > 0 && (
                     <div className="saved-section">
                       <div className="saved-section-header">
@@ -1827,7 +2170,9 @@ export default function App() {
                         >
                           <span
                             className="community-dot"
-                            style={{ background: clusterColorMap?.get(s.clusterValue) ?? UNKNOWN_COLOR }}
+                            style={{ background: homogeneityMode
+                              ? plasmaColor(homogeneityMap?.get(s.clusterValue) ?? 0)
+                              : clusterColorMap?.get(s.clusterValue) ?? UNKNOWN_COLOR }}
                           />
                           <span className="community-label">{getDisplayName(s.clusterValue)}</span>
                           <span className="community-count">{s.nodeCount}</span>
@@ -1845,6 +2190,46 @@ export default function App() {
                 </div>
                 <div className="panel-resize-handle" onMouseDown={communityResize.onVStart} />
                 <div className="panel-resize-handle-h" onMouseDown={communityResize.onHStart} />
+              </div>
+            )}
+
+            {/* Community node list panel */}
+            {selectedNodes && selectedCluster != null && loaded && (
+              <div
+                className="tool-panel community-node-panel draggable-panel"
+                style={{
+                  ...nodeListDrag.dragStyle,
+                  ...(nodeListResize.size.h != null ? { height: nodeListResize.size.h } : { height: 350 }),
+                  ...(nodeListResize.size.w != null ? { width: nodeListResize.size.w } : {}),
+                  display: 'flex', flexDirection: 'column',
+                }}
+              >
+                <div
+                  className="drag-handle community-panel-toggle"
+                  onMouseDown={nodeListDrag.onDragStart}
+                >
+                  {getDisplayName(selectedCluster)} ({selectedNodes.length})
+                  <button className="genre-detail-close" onClick={() => setSelectedCluster(null)}>&times;</button>
+                </div>
+                <ul className="community-node-list-items" style={{ flex: 1, overflowY: 'auto', margin: 0, padding: '4px 0' }}>
+                  {selectedNodes.map(n => (
+                    <li
+                      key={n.id}
+                      className="community-node-item"
+                      onClick={(e) => { e.stopPropagation(); handleGenreClick(n.label); }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const idx = loaded.idToIndex.get(String(n.id)) ?? -1;
+                        if (idx >= 0) setNodeContextMenu({ x: e.clientX, y: e.clientY, pointIndex: idx, label: n.label });
+                      }}
+                    >
+                      {n.label}
+                    </li>
+                  ))}
+                </ul>
+                <div className="panel-resize-handle" onMouseDown={nodeListResize.onVStart} />
+                <div className="panel-resize-handle-h" onMouseDown={nodeListResize.onHStart} />
               </div>
             )}
 
@@ -1965,6 +2350,111 @@ export default function App() {
                 </div>
                 <div className="panel-resize-handle" onMouseDown={edgeResize.onVStart} />
                 <div className="panel-resize-handle-h" onMouseDown={edgeResize.onHStart} />
+              </div>
+            )}
+
+            {/* Neighborhood Paths panel */}
+            {loaded?.hasCluster && loaded.clusterGroups.size > 1 && openTools.has('paths') && (
+              <div
+                className="tool-panel paths-panel draggable-panel"
+                style={{ ...pathsDrag.dragStyle, ...(pathsResize.size.h != null ? { height: pathsResize.size.h } : {}), ...(pathsResize.size.w != null ? { width: pathsResize.size.w } : {}) }}
+              >
+                <div
+                  className="drag-handle paths-panel-toggle"
+                  onMouseDown={pathsDrag.onDragStart}
+                >
+                  Neighborhood Paths
+                  <button className="genre-detail-close" onClick={() => toggleTool('paths')}>&times;</button>
+                </div>
+                <div className="paths-panel-body">
+                  <label>
+                    Community A
+                    <select
+                      value={pathCommunityA ?? ''}
+                      onChange={e => { setPathCommunityA(e.target.value || null); setPathError(null); }}
+                    >
+                      <option value="">Select...</option>
+                      {[...loaded.clusterGroups.entries()].map(([key, group]) => (
+                        <option key={key} value={key} disabled={key === pathCommunityB}>
+                          {communityNames.get(key) || `Community ${key}`} ({group.indices.length})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Community B
+                    <select
+                      value={pathCommunityB ?? ''}
+                      onChange={e => { setPathCommunityB(e.target.value || null); setPathError(null); }}
+                    >
+                      <option value="">Select...</option>
+                      {[...loaded.clusterGroups.entries()].map(([key, group]) => (
+                        <option key={key} value={key} disabled={key === pathCommunityA}>
+                          {communityNames.get(key) || `Community ${key}`} ({group.indices.length})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="paths-restrict-toggle">
+                    <input
+                      type="checkbox"
+                      checked={pathRestrict}
+                      onChange={e => setPathRestrict(e.target.checked)}
+                    />
+                    Restrict to selected communities only
+                  </label>
+
+                  <button
+                    className="cluster-algo-apply-btn"
+                    disabled={pathLoading || !pathCommunityA || !pathCommunityB || pathCommunityA === pathCommunityB}
+                    onClick={handleFindPaths}
+                  >
+                    {pathLoading ? 'Finding...' : 'Find Paths'}
+                  </button>
+
+                  {pathError && (
+                    <div className="cluster-algo-error">{pathError}</div>
+                  )}
+
+                  {pathResults.length > 0 && (
+                    <div className="paths-results">
+                      <div className="edge-results-header">
+                        {pathResults.length} path{pathResults.length > 1 ? 's' : ''} found
+                        {selectedPath && (
+                          <button className="edge-clear-btn" onClick={() => handlePathSelect(null)}>Clear</button>
+                        )}
+                      </div>
+                      <ul className="paths-results-list">
+                        {pathResults.map((p, i) => {
+                          const isSelected = selectedPath === p;
+                          return (
+                            <li
+                              key={i}
+                              className={`paths-result-row ${isSelected ? 'selected' : ''}`}
+                              onClick={() => handlePathSelect(p)}
+                            >
+                              <div className="paths-result-header">
+                                <span className={`paths-type-badge ${p.pathType === 'shortest' ? 'shortest' : 'longest'}`}>
+                                  {p.pathType === 'shortest' ? 'Shortest' : 'Longest'}
+                                </span>
+                                <span className="paths-result-stats">
+                                  {p.length} hop{p.length !== 1 ? 's' : ''} &middot; wt {p.totalWeight}
+                                </span>
+                              </div>
+                              <div className="paths-result-chain">
+                                {p.labels.join(' \u2192 ')}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                <div className="panel-resize-handle" onMouseDown={pathsResize.onVStart} />
+                <div className="panel-resize-handle-h" onMouseDown={pathsResize.onHStart} />
               </div>
             )}
 
@@ -2094,6 +2584,42 @@ export default function App() {
                     >
                       Edit Tags
                     </button>
+                    {/* Listening overlap stats */}
+                    {overlapMatches?.has(selectedAlbum.id) && (() => {
+                      const om = overlapMatches.get(selectedAlbum.id)!;
+                      return (
+                        <div className="overlap-detail-section">
+                          <div className="overlap-detail-header">My Listening</div>
+                          <div className="album-detail-row">
+                            <span className="album-detail-label">Plays</span>
+                            <span className="album-detail-value">{om.playCount} ({Math.round(om.totalMs / 60000)}m)</span>
+                          </div>
+                          {om.firstListenEpochMs && (
+                            <div className="album-detail-row">
+                              <span className="album-detail-label">First</span>
+                              <span className="album-detail-value">{new Date(om.firstListenEpochMs).toLocaleDateString()}</span>
+                            </div>
+                          )}
+                          {om.lastListenEpochMs && (
+                            <div className="album-detail-row">
+                              <span className="album-detail-label">Last</span>
+                              <span className="album-detail-value">{new Date(om.lastListenEpochMs).toLocaleDateString()}</span>
+                            </div>
+                          )}
+                          {om.topTracks.length > 0 && (
+                            <ul className="overlap-top-tracks">
+                              {om.topTracks.map((t, i) => (
+                                <li key={i} className="overlap-top-track">
+                                  <span className="genre-detail-rank">#{i + 1}</span>
+                                  <span className="overlap-top-track-name">{t.trackName}</span>
+                                  <span className="genre-detail-plays">{t.playCount}x</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* ── Tracks section ── */}
@@ -2587,6 +3113,242 @@ export default function App() {
             </div>
             )}
 
+            {/* User listening overlap panel */}
+            {openTools.has('overlap') && (
+            <div
+              className="tool-panel overlap-panel draggable-panel"
+              style={{ ...overlapDrag.dragStyle, ...(overlapResize.size.h != null ? { height: overlapResize.size.h } : {}), ...(overlapResize.size.w != null ? { width: overlapResize.size.w } : {}) }}
+            >
+              <div
+                className="drag-handle overlap-panel-toggle"
+                onMouseDown={overlapDrag.onDragStart}
+              >
+                My Listening
+                <button className="genre-detail-close" onClick={() => toggleTool('overlap')}>&times;</button>
+              </div>
+              <div className="overlap-panel-body">
+                {/* Input mode tabs */}
+                <div className="overlap-tabs">
+                  <button
+                    className={`overlap-tab ${overlapInputMode === 'path' ? 'active' : ''}`}
+                    onClick={() => setOverlapInputMode('path')}
+                  >Path</button>
+                  <button
+                    className={`overlap-tab ${overlapInputMode === 'upload' ? 'active' : ''}`}
+                    onClick={() => setOverlapInputMode('upload')}
+                  >Upload</button>
+                </div>
+
+                {overlapInputMode === 'path' ? (
+                  <div className="overlap-input-section">
+                    <input
+                      type="text"
+                      className="search-input"
+                      placeholder="Spotify history directory..."
+                      value={overlapPath}
+                      onChange={e => setOverlapPath(e.target.value)}
+                    />
+                    <button
+                      className="cluster-algo-apply-btn"
+                      disabled={overlapLoading || !overlapPath.trim()}
+                      onClick={async () => {
+                        setOverlapLoading(true);
+                        setOverlapError(null);
+                        try {
+                          const dataFile = dataUrl.replace(/^\//, '');
+                          const resp = await fetch('/api/user-overlap', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ dataFile, historyDir: overlapPath.trim() }),
+                          });
+                          const result = await resp.json();
+                          if (!resp.ok) { setOverlapError(result.error ?? `Error ${resp.status}`); return; }
+                          const map = new Map<string, OverlapMatch>();
+                          for (const m of result.matches) map.set(m.nodeId, m);
+                          setOverlapMatches(map);
+                          setOverlapSummary({ matched: result.totalMatched, total: result.totalNodes });
+                          // Inject first_seen_ts for timeline
+                          if (loaded) {
+                            for (const pt of loaded.raw.points) {
+                              const match = map.get(pt.id);
+                              if (match && match.firstListenEpochMs) {
+                                (pt as any).first_seen_ts = match.firstListenEpochMs;
+                              } else {
+                                delete (pt as any).first_seen_ts;
+                              }
+                            }
+                          }
+                        } catch (err: any) {
+                          setOverlapError(err.message ?? 'Request failed');
+                        } finally {
+                          setOverlapLoading(false);
+                        }
+                      }}
+                    >
+                      {overlapLoading ? 'Loading...' : 'Load'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="overlap-input-section">
+                    <input
+                      type="file"
+                      multiple
+                      accept=".json"
+                      className="overlap-file-input"
+                      onChange={async (e) => {
+                        const files = e.target.files;
+                        if (!files || files.length === 0) return;
+                        setOverlapLoading(true);
+                        setOverlapError(null);
+                        try {
+                          const allRecords: any[] = [];
+                          for (const file of Array.from(files)) {
+                            const text = await file.text();
+                            const parsed = JSON.parse(text);
+                            if (Array.isArray(parsed)) allRecords.push(...parsed);
+                          }
+                          const dataFile = dataUrl.replace(/^\//, '');
+                          const resp = await fetch('/api/user-overlap', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ dataFile, historyData: allRecords }),
+                          });
+                          const result = await resp.json();
+                          if (!resp.ok) { setOverlapError(result.error ?? `Error ${resp.status}`); return; }
+                          const map = new Map<string, OverlapMatch>();
+                          for (const m of result.matches) map.set(m.nodeId, m);
+                          setOverlapMatches(map);
+                          setOverlapSummary({ matched: result.totalMatched, total: result.totalNodes });
+                          // Inject first_seen_ts for timeline
+                          if (loaded) {
+                            for (const pt of loaded.raw.points) {
+                              const match = map.get(pt.id);
+                              if (match && match.firstListenEpochMs) {
+                                (pt as any).first_seen_ts = match.firstListenEpochMs;
+                              } else {
+                                delete (pt as any).first_seen_ts;
+                              }
+                            }
+                          }
+                        } catch (err: any) {
+                          setOverlapError(err.message ?? 'Failed to parse files');
+                        } finally {
+                          setOverlapLoading(false);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+
+                {overlapError && (
+                  <div className="cluster-algo-error">{overlapError}</div>
+                )}
+
+                {/* Results */}
+                {overlapSummary && overlapMatches && (
+                  <div className="overlap-results">
+                    <div className="overlap-summary">
+                      {overlapSummary.matched} of {overlapSummary.total} nodes match
+                      ({overlapSummary.total > 0 ? ((overlapSummary.matched / overlapSummary.total) * 100).toFixed(1) : '0'}%)
+                    </div>
+
+                    {overlapMatches.size > 0 ? (
+                      <>
+                        <div className="overlap-controls">
+                          <div className="overlap-mode-toggle">
+                            <button
+                              className={`overlap-mode-btn ${overlapMode === 'dim' ? 'active' : ''}`}
+                              onClick={() => setOverlapMode('dim')}
+                            >Dim</button>
+                            <button
+                              className={`overlap-mode-btn ${overlapMode === 'hide' ? 'active' : ''}`}
+                              onClick={() => setOverlapMode('hide')}
+                            >Hide</button>
+                          </div>
+                          <button
+                            className={`overlap-mode-btn ${overlapColorize ? 'active' : ''}`}
+                            onClick={() => setOverlapColorize(c => !c)}
+                            title="Color nodes by listen intensity (plasma)"
+                          >Heatmap</button>
+                          <button
+                            className="overlap-clear-btn"
+                            onClick={() => {
+                              setOverlapMatches(null);
+                              setOverlapSummary(null);
+                              setOverlapError(null);
+                              setOverlapColorize(false);
+                              // Remove injected first_seen_ts
+                              if (loaded) {
+                                for (const pt of loaded.raw.points) {
+                                  delete (pt as any).first_seen_ts;
+                                }
+                              }
+                            }}
+                          >Clear</button>
+                        </div>
+
+                        {overlapColorize && (
+                          <div className="overlap-opacity-control">
+                            <label className="overlap-opacity-label">
+                              Unmatched opacity
+                              <span className="overlap-opacity-value">{overlapOpacity.toFixed(2)}</span>
+                            </label>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.025"
+                              value={overlapOpacity}
+                              onChange={e => setOverlapOpacity(parseFloat(e.target.value))}
+                              className="overlap-opacity-slider"
+                            />
+                          </div>
+                        )}
+
+                        <ul className="overlap-match-list">
+                          {Array.from(overlapMatches.values())
+                            .sort((a, b) => b.playCount - a.playCount)
+                            .map(m => (
+                              <li
+                                key={m.nodeId}
+                                className="overlap-match-row"
+                                onClick={() => {
+                                  const inst = cosmoRef.current;
+                                  if (inst && loaded) {
+                                    inst.getPointIndicesByIds([String(m.nodeId)]).then((indices: number[] | undefined) => {
+                                      if (indices && indices.length > 0) {
+                                        inst.selectPoints(indices);
+                                        inst.zoomToPoint(indices[0], 500, 1.5);
+                                      }
+                                    });
+                                    // Open detail panel and select the node
+                                    const pt = loaded.raw.points.find((p: any) => p.id === m.nodeId);
+                                    if (pt) routeNodeClick(pt);
+                                  }
+                                }}
+                              >
+                                <div className="overlap-match-info">
+                                  <div className="overlap-match-name">{loaded?.raw.points.find((p: any) => p.id === m.nodeId)?.label ?? m.nodeId}</div>
+                                  <div className="overlap-match-stats">
+                                    {m.playCount} plays &middot; {Math.round(m.totalMs / 60000)}m
+                                  </div>
+                                </div>
+                                <span className="overlap-match-count">{m.playCount}x</span>
+                              </li>
+                            ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <div className="overlap-empty">No matches found. Your listening history doesn't overlap with this graph.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="panel-resize-handle" onMouseDown={overlapResize.onVStart} />
+              <div className="panel-resize-handle-h" onMouseDown={overlapResize.onHStart} />
+            </div>
+            )}
+
             {/* Selection tools panel */}
             {openTools.has('selection') && (
             <div
@@ -2718,11 +3480,11 @@ export default function App() {
             )}
 
             {/* Global activity spinner */}
-            {(clustering || edgeLoading || loadingTracks || loadingEdgeDetail || loadingAlbumTracks) && (
+            {(clustering || edgeLoading || loadingTracks || loadingEdgeDetail || loadingAlbumTracks || overlapLoading) && (
               <div className="global-spinner">
                 <div className="global-spinner-ring" />
                 <span className="global-spinner-label">
-                  {clustering ? 'Clustering...' : edgeLoading ? 'Analyzing edges...' : loadingMessage}
+                  {clustering ? 'Clustering...' : edgeLoading ? 'Analyzing edges...' : overlapLoading ? 'Scanning history...' : loadingMessage}
                 </span>
               </div>
             )}

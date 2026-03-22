@@ -99,8 +99,7 @@ class CosmographAdapter:
         n_items = len(graph["points"]) + len(graph["links"])
         if n_items > compact_threshold and indent is not None:
             print(
-                f"Graph has {n_items:,} items — writing compact JSON "
-                f"(override with indent=None)",
+                f"Graph has {n_items:,} items — writing compact JSON (override with indent=None)",
                 file=sys.stderr,
             )
             indent = None

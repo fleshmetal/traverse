@@ -27,6 +27,8 @@ from traverse.graph.edge_analysis import (
     EdgeAlgorithm,
     analyze_community_edges,
 )
+from traverse.graph.path_finding import find_community_paths
+from traverse.graph.user_overlap import compute_user_overlap
 
 # ── Module-level cache for canonical plays data ─────────────────────
 _canonical_plays: Optional[pd.DataFrame] = None
@@ -60,13 +62,22 @@ PENDING_CSV = DATA_DIR / "pending_corrections.csv"
 OVERRIDES_CSV = DATA_DIR / "genre_style_overrides.csv"
 
 _PENDING_FIELDS = [
-    "track_id", "track_name", "artist_name",
-    "current_genres", "current_styles",
-    "new_genres", "new_styles", "submitted_at",
+    "track_id",
+    "track_name",
+    "artist_name",
+    "current_genres",
+    "current_styles",
+    "new_genres",
+    "new_styles",
+    "submitted_at",
 ]
 _OVERRIDES_FIELDS = [
-    "track_id", "track_name", "artist_name",
-    "genres", "styles", "approved_at",
+    "track_id",
+    "track_name",
+    "artist_name",
+    "genres",
+    "styles",
+    "approved_at",
 ]
 
 
@@ -162,6 +173,10 @@ class _CORSHandler(SimpleHTTPRequestHandler):
             self._handle_deny_correction()
         elif self.path == "/api/corrections/approve-all":
             self._handle_approve_all()
+        elif self.path == "/api/paths":
+            self._handle_paths()
+        elif self.path == "/api/user-overlap":
+            self._handle_user_overlap()
         else:
             self.send_error(404, "Not Found")
 
@@ -305,6 +320,61 @@ class _CORSHandler(SimpleHTTPRequestHandler):
             },
         )
 
+    # ── POST /api/paths ─────────────────────────────────────────────
+    def _handle_paths(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body: Dict[str, Any] = json.loads(self.rfile.read(length))
+        except Exception:
+            self._json_error(400, "Invalid JSON body")
+            return
+
+        data_file = body.get("dataFile", "")
+        community_a_ids = body.get("communityAIds", [])
+        community_b_ids = body.get("communityBIds", [])
+        restrict = bool(body.get("restrictToCommunities", False))
+        max_attempts = body.get("maxDiverseAttempts", 200)
+
+        if not community_a_ids or not community_b_ids:
+            self._json_error(400, "Missing or empty 'communityAIds' or 'communityBIds'")
+            return
+
+        # Resolve data file
+        serve_dir = Path(self.directory)
+        try:
+            resolved = (serve_dir / data_file).resolve()
+            if not str(resolved).startswith(str(serve_dir.resolve())):
+                raise ValueError("path traversal")
+            if not resolved.is_file():
+                raise FileNotFoundError(data_file)
+        except Exception as exc:
+            self._json_error(400, f"Bad dataFile: {exc}")
+            return
+
+        try:
+            graph_json = json.loads(resolved.read_text(encoding="utf-8"))
+            graph = CooccurrenceGraph(
+                points=graph_json.get("points", []),
+                links=graph_json.get("links", []),
+            )
+        except Exception as exc:
+            self._json_error(500, f"Failed to read data file: {exc}")
+            return
+
+        try:
+            result = find_community_paths(
+                graph,
+                set(community_a_ids),
+                set(community_b_ids),
+                restrict_to_communities=restrict,
+                max_diverse_attempts=int(max_attempts),
+            )
+        except Exception as exc:
+            self._json_error(500, f"Path finding failed: {exc}")
+            return
+
+        self._json_response(200, result)
+
     # ── POST /api/genre-tracks ───────────────────────────────────────
     def _handle_genre_tracks(self) -> None:
         try:
@@ -369,11 +439,7 @@ class _CORSHandler(SimpleHTTPRequestHandler):
             if tag_col in matched.columns:
                 agg_spec[tag_col] = pd.NamedAgg(column=tag_col, aggfunc="first")
 
-        grouped = (
-            matched.groupby(group_cols, dropna=False)
-            .agg(**agg_spec)
-            .reset_index()
-        )
+        grouped = matched.groupby(group_cols, dropna=False).agg(**agg_spec).reset_index()
 
         grouped = grouped.sort_values("playCount", ascending=False).head(200)
 
@@ -421,7 +487,9 @@ class _CORSHandler(SimpleHTTPRequestHandler):
         df = _load_canonical_plays()
         if df is None:
             # No canonical plays — return empty gracefully
-            self._json_response(200, {"album": album, "artist": artist, "totalPlays": 0, "tracks": []})
+            self._json_response(
+                200, {"album": album, "artist": artist, "totalPlays": 0, "tracks": []}
+            )
             return
 
         # Match by artist name (case-insensitive, exact first, then contains)
@@ -435,7 +503,9 @@ class _CORSHandler(SimpleHTTPRequestHandler):
 
         matched = df[mask]
         if matched.empty:
-            self._json_response(200, {"album": album, "artist": artist, "totalPlays": 0, "tracks": []})
+            self._json_response(
+                200, {"album": album, "artist": artist, "totalPlays": 0, "tracks": []}
+            )
             return
 
         # Group by track, count plays
@@ -455,11 +525,7 @@ class _CORSHandler(SimpleHTTPRequestHandler):
             if tag_col in matched.columns:
                 agg_spec[tag_col] = pd.NamedAgg(column=tag_col, aggfunc="first")
 
-        grouped = (
-            matched.groupby(group_cols, dropna=False)
-            .agg(**agg_spec)
-            .reset_index()
-        )
+        grouped = matched.groupby(group_cols, dropna=False).agg(**agg_spec).reset_index()
         grouped = grouped.sort_values("playCount", ascending=False).head(200)
 
         tracks = []
@@ -488,6 +554,76 @@ class _CORSHandler(SimpleHTTPRequestHandler):
                 "tracks": tracks,
             },
         )
+
+    # ── POST /api/user-overlap ──────────────────────────────────────
+    def _handle_user_overlap(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body: Dict[str, Any] = json.loads(self.rfile.read(length))
+        except Exception:
+            self._json_error(400, "Invalid JSON body")
+            return
+
+        data_file = body.get("dataFile", "")
+        history_dir_str = body.get("historyDir")
+        history_data = body.get("historyData")
+
+        # Resolve data file
+        serve_dir = Path(self.directory)
+        try:
+            resolved = (serve_dir / data_file).resolve()
+            if not str(resolved).startswith(str(serve_dir.resolve())):
+                raise ValueError("path traversal")
+            if not resolved.is_file():
+                raise FileNotFoundError(data_file)
+        except Exception as exc:
+            self._json_error(400, f"Bad dataFile: {exc}")
+            return
+
+        try:
+            graph_json = json.loads(resolved.read_text(encoding="utf-8"))
+            graph = CooccurrenceGraph(
+                points=graph_json.get("points", []),
+                links=graph_json.get("links", []),
+            )
+        except Exception as exc:
+            self._json_error(500, f"Failed to read data file: {exc}")
+            return
+
+        # Determine history source
+        history_dir: Optional[Path] = None
+        history_records: Optional[List[Any]] = None
+
+        if history_dir_str:
+            hdir = Path(history_dir_str).resolve()
+            if not hdir.is_dir():
+                self._json_error(400, f"History directory not found: {history_dir_str}")
+                return
+            # Validate it contains Spotify history files
+            hist_files = list(hdir.glob("Streaming_History_Audio_*.json"))
+            if not hist_files:
+                self._json_error(
+                    400, f"No Streaming_History_Audio_*.json files in {history_dir_str}"
+                )
+                return
+            history_dir = hdir
+        elif history_data and isinstance(history_data, list):
+            history_records = history_data
+        else:
+            self._json_error(400, "Provide 'historyDir' or 'historyData'")
+            return
+
+        try:
+            result = compute_user_overlap(
+                graph,
+                history_dir=history_dir,
+                history_records=history_records,
+            )
+        except Exception as exc:
+            self._json_error(500, f"Overlap computation failed: {exc}")
+            return
+
+        self._json_response(200, result)
 
     # ── GET /api/corrections ────────────────────────────────────────
     def _handle_get_corrections(self) -> None:
@@ -594,18 +730,22 @@ class _CORSHandler(SimpleHTTPRequestHandler):
         # Upsert into overrides CSV
         overrides = _read_csv_rows(OVERRIDES_CSV, _OVERRIDES_FIELDS)
         overrides = [r for r in overrides if r.get("track_id") != track_id]
-        overrides.append({
-            "track_id": track_id,
-            "track_name": pending_row.get("track_name", ""),
-            "artist_name": pending_row.get("artist_name", ""),
-            "genres": pending_row.get("new_genres", ""),
-            "styles": pending_row.get("new_styles", ""),
-            "approved_at": now,
-        })
+        overrides.append(
+            {
+                "track_id": track_id,
+                "track_name": pending_row.get("track_name", ""),
+                "artist_name": pending_row.get("artist_name", ""),
+                "genres": pending_row.get("new_genres", ""),
+                "styles": pending_row.get("new_styles", ""),
+                "approved_at": now,
+            }
+        )
         _write_csv_rows(OVERRIDES_CSV, _OVERRIDES_FIELDS, overrides)
 
         # Patch canonical tables in _out/
-        self._patch_canonical_tables(track_id, pending_row.get("new_genres", ""), pending_row.get("new_styles", ""))
+        self._patch_canonical_tables(
+            track_id, pending_row.get("new_genres", ""), pending_row.get("new_styles", "")
+        )
 
     def _patch_canonical_tables(self, track_id: str, genres: str, styles: str) -> None:
         """Patch canonical_tracks and canonical_plays parquet files, reset cache."""
@@ -690,6 +830,17 @@ def serve(
     handler = partial(_CORSHandler, directory=str(serve_dir))
     httpd = ThreadingHTTPServer((host, port), handler)
     print(f"Serving {serve_dir} at http://{host}:{port}")
+    if host == "0.0.0.0":
+        import socket
+
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            print(f"Network access: http://{local_ip}:{port}")
+        except Exception:
+            print("Network access: http://<your-local-ip>:" + str(port))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

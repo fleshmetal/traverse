@@ -187,16 +187,6 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
       ...(ptTime.has ? { pointTimeBy: 'first_seen_ts' } : {}),
       ...(hasCluster && clusterField ? {
         pointClusterBy: clusterField,
-        pointColorBy: clusterField,
-        pointColorStrategy: 'categorical',
-        pointColorPalette: [
-          '#00e5ff', // cyan
-          '#ff4081', // pink
-          '#76ff03', // lime
-          '#ffea00', // yellow
-          '#e040fb', // purple
-          '#ff6e40', // orange
-        ],
       } : {}),
     },
     links: {

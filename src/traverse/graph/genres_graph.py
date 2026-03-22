@@ -23,7 +23,13 @@ import pandas as pd
 
 from traverse.graph.cooccurrence import CooccurrenceGraph
 from traverse.graph.external_links import build_external_links
-from traverse.processing.normalize import coerce_year, is_skip_artist, matches_required_tags, pretty_label, split_tags
+from traverse.processing.normalize import (
+    coerce_year,
+    is_skip_artist,
+    matches_required_tags,
+    pretty_label,
+    split_tags,
+)
 
 
 def _detect_col(colmap: Dict[str, str], *candidates: str) -> Optional[str]:
@@ -168,8 +174,7 @@ def build_genre_graph(
 
     n_total = len(node_all_tags)
     print(
-        f"Pass 1: {total_rows:,} rows scanned, "
-        f"{n_total:,} unique {label}s with tags",
+        f"Pass 1: {total_rows:,} rows scanned, {n_total:,} unique {label}s with tags",
         file=sys.stderr,
     )
 
@@ -180,7 +185,8 @@ def build_genre_graph(
         before = len(node_all_tags)
         if by_album:
             keep_keys = [
-                k for k in node_all_tags
+                k
+                for k in node_all_tags
                 if matches_required_tags(
                     node_genres.get(k, set()),
                     node_styles.get(k, set()),
@@ -190,7 +196,8 @@ def build_genre_graph(
             ]
         else:
             keep_keys = [
-                k for k in node_all_tags
+                k
+                for k in node_all_tags
                 if matches_required_tags(
                     node_genres.get(k, set()),
                     node_styles.get(k, set()),
@@ -206,8 +213,7 @@ def build_genre_graph(
             node_meta = {k: m for k, m in node_meta.items() if k in keep}
         n_total = len(node_all_tags)
         print(
-            f"  require_tags filter: {before:,} → {n_total:,} {label}s "
-            f"(require={require_tags})",
+            f"  require_tags filter: {before:,} → {n_total:,} {label}s (require={require_tags})",
             file=sys.stderr,
         )
 
@@ -310,12 +316,8 @@ def build_genre_graph(
     points: List[Dict[str, Any]] = []
     for nid in sorted(node_ints):
         key = keys_sorted[nid]
-        genres_str = " | ".join(
-            pretty_label(g) for g in sorted(node_genres.get(key, set()))
-        )
-        styles_str = " | ".join(
-            pretty_label(s) for s in sorted(node_styles.get(key, set()))
-        )
+        genres_str = " | ".join(pretty_label(g) for g in sorted(node_genres.get(key, set())))
+        styles_str = " | ".join(pretty_label(s) for s in sorted(node_styles.get(key, set())))
 
         if by_album:
             meta = node_meta[key]
@@ -360,12 +362,10 @@ def build_genre_graph(
                 "track_name": node_meta[keys_sorted[nid]]["label"],
                 "artist_name": node_meta[keys_sorted[nid]]["artist"],
                 "genres": " | ".join(
-                    pretty_label(g)
-                    for g in sorted(node_genres.get(keys_sorted[nid], set()))
+                    pretty_label(g) for g in sorted(node_genres.get(keys_sorted[nid], set()))
                 ),
                 "styles": " | ".join(
-                    pretty_label(s)
-                    for s in sorted(node_styles.get(keys_sorted[nid], set()))
+                    pretty_label(s) for s in sorted(node_styles.get(keys_sorted[nid], set()))
                 ),
             }
             for nid in sorted(node_ints)
@@ -375,12 +375,10 @@ def build_genre_graph(
             {
                 "artist_name": keys_sorted[nid],
                 "genres": " | ".join(
-                    pretty_label(g)
-                    for g in sorted(node_genres.get(keys_sorted[nid], set()))
+                    pretty_label(g) for g in sorted(node_genres.get(keys_sorted[nid], set()))
                 ),
                 "styles": " | ".join(
-                    pretty_label(s)
-                    for s in sorted(node_styles.get(keys_sorted[nid], set()))
+                    pretty_label(s) for s in sorted(node_styles.get(keys_sorted[nid], set()))
                 ),
             }
             for nid in sorted(node_ints)
