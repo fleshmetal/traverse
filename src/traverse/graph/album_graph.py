@@ -359,8 +359,8 @@ def build_album_graph(
     # This keeps peak memory bounded regardless of graph scale.
     # ------------------------------------------------------------------
     BATCH_CAP = 30_000_000  # consolidate every ~30M raw pairs (~240 MB)
-    batch_rows: List[np.ndarray] = []
-    batch_cols: List[np.ndarray] = []
+    batch_rows: List[npt.NDArray[Any]] = []
+    batch_cols: List[npt.NDArray[Any]] = []
     batch_size = 0
     skipped_tags = 0
     sampled_tags = 0
