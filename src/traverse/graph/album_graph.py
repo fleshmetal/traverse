@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from traverse.graph.cooccurrence import CooccurrenceGraph
@@ -44,7 +45,7 @@ def _detect_col(colmap: Dict[str, str], *candidates: str) -> Optional[str]:
     return None
 
 
-def _pairs_from_sorted(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def _pairs_from_sorted(arr: npt.NDArray[Any]) -> Tuple[npt.NDArray[Any], npt.NDArray[Any]]:
     """Given a sorted 1-D int32 array, return (rows, cols) for all
     upper-triangle pairs.  Uses numpy broadcasting — much faster than
     itertools.combinations for arrays up to ~2000 elements."""
@@ -56,11 +57,11 @@ def _pairs_from_sorted(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def _consolidate(
-    all_rows: List[np.ndarray],
-    all_cols: List[np.ndarray],
+    all_rows: List[npt.NDArray[Any]],
+    all_cols: List[npt.NDArray[Any]],
     min_weight: int,
     prune: bool,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
     """Concatenate batched (row, col) arrays, sum duplicate pairs via
     np.unique, and optionally prune singletons.
 
@@ -365,9 +366,9 @@ def build_album_graph(
     sampled_tags = 0
 
     # Accumulated unique edges from prior consolidations
-    acc_rows = np.empty(0, dtype=np.int32)
-    acc_cols = np.empty(0, dtype=np.int32)
-    acc_weights = np.empty(0, dtype=np.int32)
+    acc_rows: npt.NDArray[Any] = np.empty(0, dtype=np.int32)
+    acc_cols: npt.NDArray[Any] = np.empty(0, dtype=np.int32)
+    acc_weights: npt.NDArray[Any] = np.empty(0, dtype=np.int32)
     consolidation_count = 0
 
     tag_items: Any = tag_to_ints.items()
@@ -444,9 +445,9 @@ def build_album_graph(
 
                     # Prune singletons
                     if not unweighted and min_weight >= 2:
-                        keep = summed_weights >= 2
-                        unique_packed = unique_packed[keep]
-                        summed_weights = summed_weights[keep]
+                        prune_mask = summed_weights >= 2
+                        unique_packed = unique_packed[prune_mask]
+                        summed_weights = summed_weights[prune_mask]
 
                     acc_rows = (unique_packed // np.int64(2_200_000_000)).astype(np.int32)
                     acc_cols = (unique_packed % np.int64(2_200_000_000)).astype(np.int32)
@@ -512,7 +513,7 @@ def build_album_graph(
     # ------------------------------------------------------------------
     if _require_all and len(acc_rows) > 0:
         before_and = len(acc_rows)
-        keep_mask = np.ones(len(acc_rows), dtype=np.bool_)
+        keep_mask: npt.NDArray[Any] = np.ones(len(acc_rows), dtype=np.bool_)
         for i in range(len(acc_rows)):
             a, b = int(acc_rows[i]), int(acc_cols[i])
             for tt in tag_types:

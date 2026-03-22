@@ -592,7 +592,7 @@ class _CORSHandler(SimpleHTTPRequestHandler):
 
         # Determine history source
         history_dir: Optional[Path] = None
-        history_records: Optional[list] = None
+        history_records: Optional[List[Any]] = None
 
         if history_dir_str:
             hdir = Path(history_dir_str).resolve()

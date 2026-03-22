@@ -404,16 +404,16 @@ def build_artist_graph(
     # ------------------------------------------------------------------
     if _require_all and edge_weights:
         before_and = len(edge_weights)
-        filtered = Counter()
+        filtered: Counter[Tuple[int, int]] = Counter()
         for (a, b), w in edge_weights.items():
-            keep = True
+            pass_filter = True
             for tt in tag_types:
                 a_tags = _tags_by_type_int.get(tt, {}).get(a, set())
                 b_tags = _tags_by_type_int.get(tt, {}).get(b, set())
                 if not a_tags or not b_tags or a_tags.isdisjoint(b_tags):
-                    keep = False
+                    pass_filter = False
                     break
-            if keep:
+            if pass_filter:
                 filtered[(a, b)] = w
         edge_weights = filtered
         print(
