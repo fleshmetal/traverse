@@ -88,10 +88,7 @@ def _diverse_longest_path(
         # Exhaustive for small communities
         pairs = [(a, b) for a in a_nodes for b in b_nodes]
     else:
-        pairs = [
-            (random.choice(a_nodes), random.choice(b_nodes))
-            for _ in range(max_attempts)
-        ]
+        pairs = [(random.choice(a_nodes), random.choice(b_nodes)) for _ in range(max_attempts)]
 
     best_path: List[str] | None = None
     best_length = -1
@@ -153,26 +150,28 @@ def find_community_paths(
     # Shortest path
     shortest = _shortest_path_via_virtuals(G, community_a_ids, community_b_ids)
     if shortest:
-        paths.append({
-            "nodes": shortest,
-            "labels": [labels.get(n, n) for n in shortest],
-            "length": len(shortest) - 1,
-            "totalWeight": _path_weight(G, shortest),
-            "pathType": "shortest",
-        })
+        paths.append(
+            {
+                "nodes": shortest,
+                "labels": [labels.get(n, n) for n in shortest],
+                "length": len(shortest) - 1,
+                "totalWeight": _path_weight(G, shortest),
+                "pathType": "shortest",
+            }
+        )
 
     # Diverse longest path
-    longest = _diverse_longest_path(
-        G, community_a_ids, community_b_ids, max_diverse_attempts
-    )
+    longest = _diverse_longest_path(G, community_a_ids, community_b_ids, max_diverse_attempts)
     if longest and longest != shortest:
-        paths.append({
-            "nodes": longest,
-            "labels": [labels.get(n, n) for n in longest],
-            "length": len(longest) - 1,
-            "totalWeight": _path_weight(G, longest),
-            "pathType": "diverse_longest",
-        })
+        paths.append(
+            {
+                "nodes": longest,
+                "labels": [labels.get(n, n) for n in longest],
+                "length": len(longest) - 1,
+                "totalWeight": _path_weight(G, longest),
+                "pathType": "diverse_longest",
+            }
+        )
 
     message = None
     if not paths:

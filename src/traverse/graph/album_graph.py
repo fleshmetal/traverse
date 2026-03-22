@@ -27,7 +27,13 @@ import pandas as pd
 
 from traverse.graph.cooccurrence import CooccurrenceGraph
 from traverse.graph.external_links import build_external_links
-from traverse.processing.normalize import coerce_year, is_skip_artist, matches_required_tags, pretty_label, split_tags
+from traverse.processing.normalize import (
+    coerce_year,
+    is_skip_artist,
+    matches_required_tags,
+    pretty_label,
+    split_tags,
+)
 
 
 def _detect_col(colmap: Dict[str, str], *candidates: str) -> Optional[str]:
@@ -266,7 +272,8 @@ def build_album_graph(
     if require_tags:
         before = len(node_edge_tags)
         keep_keys = [
-            k for k, meta in node_meta.items()
+            k
+            for k, meta in node_meta.items()
             if matches_required_tags(
                 [t.strip() for t in meta.get("genres", "").split("|") if t.strip()],
                 [t.strip() for t in meta.get("styles", "").split("|") if t.strip()],
@@ -284,8 +291,7 @@ def build_album_graph(
                 }
         n_total = len(node_edge_tags)
         print(
-            f"  require_tags filter: {before:,} → {n_total:,} albums "
-            f"(require={require_tags})",
+            f"  require_tags filter: {before:,} → {n_total:,} albums (require={require_tags})",
             file=sys.stderr,
         )
 
@@ -295,7 +301,7 @@ def build_album_graph(
     if max_nodes > 0 and n_total > max_nodes:
         ranked = sorted(
             node_edge_tags.keys(),
-            key=lambda k: len(node_edge_tags[k]),
+            key=lambda k: len(node_edge_tags[k]),  # noqa: F821
             reverse=True,
         )
         keep = set(ranked[:max_nodes])
@@ -324,9 +330,7 @@ def build_album_graph(
     if _require_all:
         for tt in tag_types:
             _tags_by_type_int[tt] = {
-                str_to_int[k]: v
-                for k, v in node_tags_by_type[tt].items()
-                if k in str_to_int
+                str_to_int[k]: v for k, v in node_tags_by_type[tt].items() if k in str_to_int
             }
         del node_tags_by_type
 
@@ -341,8 +345,7 @@ def build_album_graph(
     n_records = len(int_to_str)
 
     print(
-        f"Pass 1c: {n_records:,} albums → {len(tag_to_ints):,} unique tags "
-        f"in inverted index",
+        f"Pass 1c: {n_records:,} albums → {len(tag_to_ints):,} unique tags in inverted index",
         file=sys.stderr,
     )
 
@@ -372,9 +375,7 @@ def build_album_graph(
         try:
             from tqdm import tqdm
 
-            tag_items = tqdm(
-                tag_items, total=len(tag_to_ints), desc="Building edges", unit="tag"
-            )
+            tag_items = tqdm(tag_items, total=len(tag_to_ints), desc="Building edges", unit="tag")
         except ImportError:
             pass
 
@@ -424,7 +425,9 @@ def build_album_graph(
                     m_cols = np.concatenate([acc_cols, b_c])
                     m_weights = np.concatenate([acc_weights, b_w])
 
-                    packed = m_rows.astype(np.int64) * np.int64(2_200_000_000) + m_cols.astype(np.int64)
+                    packed = m_rows.astype(np.int64) * np.int64(2_200_000_000) + m_cols.astype(
+                        np.int64
+                    )
                     order = np.argsort(packed)
                     packed = packed[order]
                     m_weights = m_weights[order]
@@ -457,8 +460,7 @@ def build_album_graph(
 
             consolidation_count += 1
             print(
-                f"  consolidated #{consolidation_count}: "
-                f"{len(acc_rows):,} unique edges",
+                f"  consolidated #{consolidation_count}: {len(acc_rows):,} unique edges",
                 file=sys.stderr,
             )
             batch_rows = []
@@ -468,9 +470,7 @@ def build_album_graph(
     # Final consolidation of remaining batch
     if batch_size > 0 or len(acc_rows) > 0:
         if len(acc_rows) > 0 and batch_size > 0:
-            b_r, b_c, b_w = _consolidate(
-                batch_rows, batch_cols, min_weight, prune=not unweighted
-            )
+            b_r, b_c, b_w = _consolidate(batch_rows, batch_cols, min_weight, prune=not unweighted)
             if len(b_r) > 0:
                 m_rows = np.concatenate([acc_rows, b_r])
                 m_cols = np.concatenate([acc_cols, b_c])
@@ -525,8 +525,7 @@ def build_album_graph(
         acc_cols = acc_cols[keep_mask]
         acc_weights = acc_weights[keep_mask]
         print(
-            f"  require_all_tag_types filter: {before_and:,} → "
-            f"{len(acc_rows):,} edges",
+            f"  require_all_tag_types filter: {before_and:,} → {len(acc_rows):,} edges",
             file=sys.stderr,
         )
 

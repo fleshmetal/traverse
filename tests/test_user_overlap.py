@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
-
-import pytest
 
 from traverse.graph.cooccurrence import CooccurrenceGraph
 from traverse.graph.user_overlap import compute_user_overlap
@@ -16,11 +13,7 @@ from traverse.graph.user_overlap import compute_user_overlap
 def _artist_graph(names: List[str]) -> CooccurrenceGraph:
     """Build a minimal artist-type graph (no 'artist' field on points)."""
     points = [{"id": n, "label": n, "genres": "rock"} for n in names]
-    links = (
-        [{"source": names[0], "target": names[1], "weight": 1}]
-        if len(names) >= 2
-        else []
-    )
+    links = [{"source": names[0], "target": names[1], "weight": 1}] if len(names) >= 2 else []
     return CooccurrenceGraph(points=points, links=links)
 
 
@@ -194,9 +187,7 @@ class TestComputeUserOverlap:
 
     def test_no_match(self) -> None:
         graph = _artist_graph(["Artist A", "Artist B"])
-        records = _history_records(
-            [{"artist": "Unknown Artist", "ms_played": 60_000}]
-        )
+        records = _history_records([{"artist": "Unknown Artist", "ms_played": 60_000}])
         result = compute_user_overlap(graph, history_records=records)
         assert result["totalMatched"] == 0
         assert result["totalNodes"] == 2

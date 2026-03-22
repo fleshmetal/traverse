@@ -23,7 +23,12 @@ import pandas as pd
 
 from traverse.graph.cooccurrence import CooccurrenceGraph
 from traverse.graph.external_links import build_external_links
-from traverse.processing.normalize import is_skip_artist, matches_required_tags, pretty_label, split_tags
+from traverse.processing.normalize import (
+    is_skip_artist,
+    matches_required_tags,
+    pretty_label,
+    split_tags,
+)
 
 
 def _detect_col(colmap: Dict[str, str], *candidates: str) -> Optional[str]:
@@ -202,7 +207,8 @@ def build_artist_graph(
     if require_tags:
         before = len(artist_all_tags)
         keep_keys = [
-            k for k in artist_all_tags
+            k
+            for k in artist_all_tags
             if matches_required_tags(
                 artist_genres.get(k, set()),
                 artist_styles.get(k, set()),
@@ -221,8 +227,7 @@ def build_artist_graph(
                 }
         n_total = len(artist_all_tags)
         print(
-            f"  require_tags filter: {before:,} → {n_total:,} artists "
-            f"(require={require_tags})",
+            f"  require_tags filter: {before:,} → {n_total:,} artists (require={require_tags})",
             file=sys.stderr,
         )
 
@@ -232,7 +237,7 @@ def build_artist_graph(
     if max_nodes > 0 and n_total > max_nodes:
         ranked = sorted(
             artist_all_tags.keys(),
-            key=lambda k: len(artist_all_tags[k]),
+            key=lambda k: len(artist_all_tags[k]),  # noqa: F821
             reverse=True,
         )
         keep = set(ranked[:max_nodes])
@@ -260,9 +265,7 @@ def build_artist_graph(
     if _require_all:
         for tt in tag_types:
             _tags_by_type_int[tt] = {
-                key_to_int[k]: v
-                for k, v in artist_tags_by_type[tt].items()
-                if k in key_to_int
+                key_to_int[k]: v for k, v in artist_tags_by_type[tt].items() if k in key_to_int
             }
         del artist_tags_by_type
 
@@ -309,8 +312,10 @@ def build_artist_graph(
                 from tqdm import tqdm
 
                 node_iter = tqdm(
-                    node_iter, total=n_nodes,
-                    desc="Finding neighbors", unit="node",
+                    node_iter,
+                    total=n_nodes,
+                    desc="Finding neighbors",
+                    unit="node",
                 )
             except ImportError:
                 pass
@@ -412,8 +417,7 @@ def build_artist_graph(
                 filtered[(a, b)] = w
         edge_weights = filtered
         print(
-            f"  require_all_tag_types filter: {before_and:,} → "
-            f"{len(edge_weights):,} edges",
+            f"  require_all_tag_types filter: {before_and:,} → {len(edge_weights):,} edges",
             file=sys.stderr,
         )
 
@@ -450,12 +454,8 @@ def build_artist_graph(
     points: List[Dict[str, Any]] = []
     for nid in sorted(node_ints):
         key = keys_sorted[nid]
-        genres_str = " | ".join(
-            pretty_label(g) for g in sorted(artist_genres.get(key, set()))
-        )
-        styles_str = " | ".join(
-            pretty_label(s) for s in sorted(artist_styles.get(key, set()))
-        )
+        genres_str = " | ".join(pretty_label(g) for g in sorted(artist_genres.get(key, set())))
+        styles_str = " | ".join(pretty_label(s) for s in sorted(artist_styles.get(key, set())))
         pt: Dict[str, Any] = {"id": key, "label": key}
         if genres_str:
             pt["genres"] = genres_str
@@ -480,12 +480,10 @@ def build_artist_graph(
         {
             "artist_name": keys_sorted[nid],
             "genres": " | ".join(
-                pretty_label(g)
-                for g in sorted(artist_genres.get(keys_sorted[nid], set()))
+                pretty_label(g) for g in sorted(artist_genres.get(keys_sorted[nid], set()))
             ),
             "styles": " | ".join(
-                pretty_label(s)
-                for s in sorted(artist_styles.get(keys_sorted[nid], set()))
+                pretty_label(s) for s in sorted(artist_styles.get(keys_sorted[nid], set()))
             ),
         }
         for nid in sorted(node_ints)

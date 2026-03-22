@@ -169,7 +169,9 @@ class TestFindCommunityPaths:
         for path in result["paths"]:
             assert path["totalWeight"] > 0
 
-    def test_diverse_longest_differs_from_shortest(self, two_cluster_graph: CooccurrenceGraph) -> None:
+    def test_diverse_longest_differs_from_shortest(
+        self, two_cluster_graph: CooccurrenceGraph
+    ) -> None:
         result = find_community_paths(
             two_cluster_graph,
             community_a_ids={"a", "b", "c"},
