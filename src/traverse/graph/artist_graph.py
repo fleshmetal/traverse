@@ -45,6 +45,7 @@ def build_artist_graph(
     max_tag_degree: int = 200,
     sample_high_degree: bool = True,
     require_tags: Optional[Dict[str, List[str]]] = None,
+    require_all_tag_types: bool = False,
     chunksize: int = 200_000,
     progress: bool = True,
 ) -> Tuple[CooccurrenceGraph, pd.DataFrame]:
@@ -94,6 +95,12 @@ def build_artist_graph(
         passes if it has at least one match per key (OR within a key,
         AND across keys).  Applied after full tag accumulation, before
         edge building.
+    require_all_tag_types : bool
+        When True and multiple *tag_types* are specified, two nodes
+        must share at least one tag from **each** tag type to get an
+        edge (AND logic).  When False (default), sharing any tag from
+        any type suffices (OR logic).  Has no effect when only one
+        tag type is used.
     chunksize : int
         CSV read chunk size.
     progress : bool
@@ -103,6 +110,8 @@ def build_artist_graph(
         tag_types = ["styles"]
     use_genres = "genres" in tag_types
     use_styles = "styles" in tag_types
+    # Only activate AND logic when there are multiple tag types
+    _require_all = require_all_tag_types and len(tag_types) > 1
 
     # ------------------------------------------------------------------
     # Pass 1a: Stream CSV, collect unique artists + merged tag sets
@@ -110,6 +119,10 @@ def build_artist_graph(
     artist_genres: Dict[str, Set[str]] = {}
     artist_styles: Dict[str, Set[str]] = {}
     artist_all_tags: Dict[str, Set[str]] = {}
+    # Per-type edge-tag sets for require_all_tag_types filtering
+    artist_tags_by_type: Dict[str, Dict[str, Set[str]]] = (
+        {tt: {} for tt in tag_types} if _require_all else {}
+    )
     total_rows = 0
 
     raw_reader = pd.read_csv(
@@ -168,6 +181,13 @@ def build_artist_graph(
             artist_genres[aval].update(genre_tags)
             artist_styles[aval].update(style_tags)
 
+            # Track per-type edge tags for AND filtering
+            if _require_all:
+                if use_genres and genre_tags:
+                    artist_tags_by_type["genres"].setdefault(aval, set()).update(genre_tags)
+                if use_styles and style_tags:
+                    artist_tags_by_type["styles"].setdefault(aval, set()).update(style_tags)
+
     n_total = len(artist_all_tags)
     print(
         f"Pass 1a: {total_rows:,} rows scanned, "
@@ -194,6 +214,11 @@ def build_artist_graph(
         artist_all_tags = {k: t for k, t in artist_all_tags.items() if k in keep}
         artist_genres = {k: g for k, g in artist_genres.items() if k in keep}
         artist_styles = {k: s for k, s in artist_styles.items() if k in keep}
+        if _require_all:
+            for tt in tag_types:
+                artist_tags_by_type[tt] = {
+                    k: v for k, v in artist_tags_by_type[tt].items() if k in keep
+                }
         n_total = len(artist_all_tags)
         print(
             f"  require_tags filter: {before:,} → {n_total:,} artists "
@@ -214,6 +239,11 @@ def build_artist_graph(
         artist_all_tags = {k: t for k, t in artist_all_tags.items() if k in keep}
         artist_genres = {k: g for k, g in artist_genres.items() if k in keep}
         artist_styles = {k: s for k, s in artist_styles.items() if k in keep}
+        if _require_all:
+            for tt in tag_types:
+                artist_tags_by_type[tt] = {
+                    k: v for k, v in artist_tags_by_type[tt].items() if k in keep
+                }
         print(
             f"Pass 1b: capped to {max_nodes:,} artists "
             f"(min tag count in kept set: "
@@ -224,6 +254,17 @@ def build_artist_graph(
     # Integer mapping
     keys_sorted = sorted(artist_all_tags.keys())
     key_to_int: Dict[str, int] = {k: i for i, k in enumerate(keys_sorted)}
+
+    # Build int-keyed per-type tag sets for AND filtering
+    _tags_by_type_int: Dict[str, Dict[int, Set[str]]] = {}
+    if _require_all:
+        for tt in tag_types:
+            _tags_by_type_int[tt] = {
+                key_to_int[k]: v
+                for k, v in artist_tags_by_type[tt].items()
+                if k in key_to_int
+            }
+        del artist_tags_by_type
 
     # ------------------------------------------------------------------
     # Pass 2: Build inverted index + edges
@@ -283,13 +324,31 @@ def build_artist_graph(
                         overlap[other] += 1
 
             # Keep top-K by overlap, respecting min_shared_tags
-            for other, w in overlap.most_common(max_edges_per_node):
+            # Over-fetch candidates when AND filtering may reject some
+            kept = 0
+            for other, w in overlap.most_common(
+                max_edges_per_node * 3 if _require_all else max_edges_per_node
+            ):
                 if w < min_shared_tags:
                     break
+                # AND filter: require shared tags in every tag type
+                if _require_all:
+                    skip = False
+                    for tt in tag_types:
+                        my_tags = _tags_by_type_int.get(tt, {}).get(nid, set())
+                        their_tags = _tags_by_type_int.get(tt, {}).get(other, set())
+                        if not my_tags or not their_tags or my_tags.isdisjoint(their_tags):
+                            skip = True
+                            break
+                    if skip:
+                        continue
                 pair = (min(nid, other), max(nid, other))
                 # Keep the max weight seen for this pair
                 if w > edge_weights.get(pair, 0):
                     edge_weights[pair] = w
+                kept += 1
+                if kept >= max_edges_per_node:
+                    break
 
         del node_tags
 
@@ -334,6 +393,32 @@ def build_artist_graph(
         )
 
     del tag_to_nodes
+
+    # ------------------------------------------------------------------
+    # Pass 2+: AND filter — require shared tags in every tag type
+    # ------------------------------------------------------------------
+    if _require_all and edge_weights:
+        before_and = len(edge_weights)
+        filtered = Counter()
+        for (a, b), w in edge_weights.items():
+            keep = True
+            for tt in tag_types:
+                a_tags = _tags_by_type_int.get(tt, {}).get(a, set())
+                b_tags = _tags_by_type_int.get(tt, {}).get(b, set())
+                if not a_tags or not b_tags or a_tags.isdisjoint(b_tags):
+                    keep = False
+                    break
+            if keep:
+                filtered[(a, b)] = w
+        edge_weights = filtered
+        print(
+            f"  require_all_tag_types filter: {before_and:,} → "
+            f"{len(edge_weights):,} edges",
+            file=sys.stderr,
+        )
+
+    if _require_all:
+        del _tags_by_type_int
 
     # ------------------------------------------------------------------
     # Pass 3: Threshold, cap, build output

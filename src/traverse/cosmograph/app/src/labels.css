@@ -47,6 +47,11 @@
   color: #ffffff !important;
 }
 
+/* Hidden label — used to suppress labels for non-selected nodes */
+.genre-label-hidden {
+  display: none !important;
+}
+
 /* ── Community selector panel ── */
 .community-panel {
   min-width: 180px;
@@ -1343,4 +1348,353 @@
   height: 18px;
   fill: currentColor;
   stroke: currentColor;
+}
+
+/* ── Neighborhood Paths panel ── */
+.paths-panel {
+  min-width: 240px;
+}
+
+.paths-panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: grab;
+  width: 100%;
+  text-align: left;
+  user-select: none;
+  box-sizing: border-box;
+}
+.paths-panel-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px 8px 0 0;
+}
+
+.paths-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.paths-panel-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: #bbb;
+}
+
+.paths-panel-body select {
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: system-ui, sans-serif;
+}
+.paths-panel-body select:focus {
+  outline: none;
+  border-color: rgba(0, 229, 255, 0.6);
+}
+
+.paths-restrict-toggle {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+  font-size: 12px;
+  color: #bbb;
+  cursor: pointer;
+}
+.paths-restrict-toggle input[type="checkbox"] {
+  accent-color: #00e5ff;
+}
+
+.paths-results {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 6px;
+}
+
+.paths-results-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 280px;
+}
+
+.paths-result-row {
+  padding: 6px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.12s;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.paths-result-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.paths-result-row.selected {
+  background: rgba(0, 229, 255, 0.15);
+}
+
+.paths-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.paths-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.paths-type-badge.shortest {
+  background: rgba(0, 229, 255, 0.2);
+  color: #00e5ff;
+}
+.paths-type-badge.longest {
+  background: rgba(255, 167, 38, 0.2);
+  color: #ffa726;
+}
+
+.paths-result-stats {
+  font-size: 11px;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.paths-result-chain {
+  font-size: 12px;
+  color: #d0d0d0;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* ── User Listening Overlap Panel ─────────────────────────────── */
+.overlap-panel {
+  min-width: 240px;
+  width: 280px;
+}
+.overlap-panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  padding: 6px 10px;
+  cursor: grab;
+}
+.overlap-panel-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.overlap-tabs {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 2px;
+}
+.overlap-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #aaa;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.overlap-tab.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e0e0e0;
+}
+.overlap-input-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.overlap-file-input {
+  font-size: 11px;
+  color: #ccc;
+}
+.overlap-file-input::file-selector-button {
+  background: rgba(0, 229, 255, 0.15);
+  color: #00e5ff;
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-right: 8px;
+}
+.overlap-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.overlap-summary {
+  font-size: 12px;
+  color: #76ff03;
+  font-weight: 500;
+  padding: 4px 0;
+}
+.overlap-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.overlap-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 2px;
+}
+.overlap-mode-btn {
+  background: transparent;
+  border: none;
+  color: #aaa;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.overlap-mode-btn.active {
+  background: rgba(118, 255, 3, 0.15);
+  color: #76ff03;
+}
+.overlap-clear-btn {
+  background: rgba(255, 110, 110, 0.15);
+  color: #ff6e6e;
+  border: 1px solid rgba(255, 110, 110, 0.3);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.overlap-clear-btn:hover {
+  background: rgba(255, 110, 110, 0.25);
+}
+.overlap-opacity-control {
+  padding: 4px 0;
+}
+.overlap-opacity-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #a6adc8;
+  margin-bottom: 3px;
+}
+.overlap-opacity-value {
+  font-family: monospace;
+  font-size: 11px;
+  color: #cdd6f4;
+}
+.overlap-opacity-slider {
+  width: 100%;
+  height: 4px;
+  accent-color: #cba6f7;
+  cursor: pointer;
+}
+.overlap-match-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 350px;
+}
+.overlap-match-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  gap: 8px;
+}
+.overlap-match-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.overlap-match-info {
+  flex: 1;
+  min-width: 0;
+}
+.overlap-match-name {
+  font-size: 12px;
+  color: #e0e0e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overlap-match-stats {
+  font-size: 10px;
+  color: #888;
+}
+.overlap-match-count {
+  font-size: 11px;
+  color: #76ff03;
+  flex-shrink: 0;
+}
+.overlap-empty {
+  font-size: 12px;
+  color: #888;
+  padding: 12px 0;
+  text-align: center;
+}
+
+/* ── Overlap detail in album panel ── */
+.overlap-detail-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.overlap-detail-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #76ff03;
+  margin-bottom: 6px;
+}
+.overlap-top-tracks {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.overlap-top-track {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+.overlap-top-track-name {
+  flex: 1;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

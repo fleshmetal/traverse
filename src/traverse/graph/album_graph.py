@@ -96,6 +96,7 @@ def build_album_graph(
     unweighted: bool = False,
     max_edge_weight: int = 0,
     require_tags: Optional[Dict[str, List[str]]] = None,
+    require_all_tag_types: bool = False,
     chunksize: int = 200_000,
     progress: bool = True,
 ) -> Tuple[CooccurrenceGraph, pd.DataFrame]:
@@ -139,6 +140,12 @@ def build_album_graph(
     max_edge_weight : int
         Cap edge weights at this value; 0 = unlimited.  Ignored when
         *unweighted* is True.
+    require_all_tag_types : bool
+        When True and multiple *tag_types* are specified, two nodes
+        must share at least one tag from **each** tag type to get an
+        edge (AND logic).  When False (default), sharing any tag from
+        any type suffices (OR logic).  Has no effect when only one
+        tag type is used.
     chunksize : int
         CSV read chunk size.
     progress : bool
@@ -149,6 +156,7 @@ def build_album_graph(
     use_genres = "genres" in tag_types
     use_styles = "styles" in tag_types
     use_artists = "artists" in tag_types
+    _require_all = require_all_tag_types and len(tag_types) > 1
     if unweighted:
         min_weight = 1
 
@@ -157,6 +165,10 @@ def build_album_graph(
     # ------------------------------------------------------------------
     node_meta: Dict[str, Dict[str, Any]] = {}
     node_edge_tags: Dict[str, Set[str]] = {}  # record_id → set of edge tags
+    # Per-type edge-tag sets for require_all_tag_types filtering
+    node_tags_by_type: Dict[str, Dict[str, Set[str]]] = (
+        {tt: {} for tt in tag_types} if _require_all else {}
+    )
     total_rows = 0
 
     raw_reader = pd.read_csv(
@@ -221,6 +233,15 @@ def build_album_graph(
 
             node_edge_tags[record_id] = set(edge_tags)
 
+            # Track per-type edge tags for AND filtering
+            if _require_all:
+                if use_genres and genre_tags:
+                    node_tags_by_type["genres"][record_id] = set(genre_tags)
+                if use_styles and style_tags:
+                    node_tags_by_type["styles"][record_id] = set(style_tags)
+                if use_artists and artist_tags:
+                    node_tags_by_type["artists"][record_id] = set(artist_tags)
+
             # Node metadata always includes all tag types
             node_meta[record_id] = {
                 "id": record_id,
@@ -256,6 +277,11 @@ def build_album_graph(
         keep = set(keep_keys)
         node_edge_tags = {k: t for k, t in node_edge_tags.items() if k in keep}
         node_meta = {k: m for k, m in node_meta.items() if k in keep}
+        if _require_all:
+            for tt in tag_types:
+                node_tags_by_type[tt] = {
+                    k: v for k, v in node_tags_by_type[tt].items() if k in keep
+                }
         n_total = len(node_edge_tags)
         print(
             f"  require_tags filter: {before:,} → {n_total:,} albums "
@@ -275,6 +301,11 @@ def build_album_graph(
         keep = set(ranked[:max_nodes])
         node_edge_tags = {k: t for k, t in node_edge_tags.items() if k in keep}
         node_meta = {k: m for k, m in node_meta.items() if k in keep}
+        if _require_all:
+            for tt in tag_types:
+                node_tags_by_type[tt] = {
+                    k: v for k, v in node_tags_by_type[tt].items() if k in keep
+                }
         print(
             f"Pass 1b: capped to {max_nodes:,} albums "
             f"(min tag count in kept set: "
@@ -287,6 +318,18 @@ def build_album_graph(
     # ------------------------------------------------------------------
     int_to_str: List[str] = sorted(node_edge_tags.keys())
     str_to_int: Dict[str, int] = {k: i for i, k in enumerate(int_to_str)}
+
+    # Build int-keyed per-type tag sets for AND filtering
+    _tags_by_type_int: Dict[str, Dict[int, Set[str]]] = {}
+    if _require_all:
+        for tt in tag_types:
+            _tags_by_type_int[tt] = {
+                str_to_int[k]: v
+                for k, v in node_tags_by_type[tt].items()
+                if k in str_to_int
+            }
+        del node_tags_by_type
+
     tag_to_ints: Dict[str, List[int]] = defaultdict(list)
 
     for record_id, tags in node_edge_tags.items():
@@ -463,6 +506,32 @@ def build_album_graph(
         f"{skipped_tags} tags skipped (degree > {max_tag_degree})",
         file=sys.stderr,
     )
+
+    # ------------------------------------------------------------------
+    # Pass 2+: AND filter — require shared tags in every tag type
+    # ------------------------------------------------------------------
+    if _require_all and len(acc_rows) > 0:
+        before_and = len(acc_rows)
+        keep_mask = np.ones(len(acc_rows), dtype=np.bool_)
+        for i in range(len(acc_rows)):
+            a, b = int(acc_rows[i]), int(acc_cols[i])
+            for tt in tag_types:
+                a_tags = _tags_by_type_int.get(tt, {}).get(a, set())
+                b_tags = _tags_by_type_int.get(tt, {}).get(b, set())
+                if not a_tags or not b_tags or a_tags.isdisjoint(b_tags):
+                    keep_mask[i] = False
+                    break
+        acc_rows = acc_rows[keep_mask]
+        acc_cols = acc_cols[keep_mask]
+        acc_weights = acc_weights[keep_mask]
+        print(
+            f"  require_all_tag_types filter: {before_and:,} → "
+            f"{len(acc_rows):,} edges",
+            file=sys.stderr,
+        )
+
+    if _require_all:
+        _tags_by_type_int.clear()
 
     # ------------------------------------------------------------------
     # Pass 3: Threshold, cap, build output
