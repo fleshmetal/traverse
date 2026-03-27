@@ -152,6 +152,8 @@ class _CORSHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/api/corrections":
             self._handle_get_corrections()
+        elif self.path == "/api/graphs":
+            self._handle_list_graphs()
         else:
             super().do_GET()
 
@@ -787,6 +789,44 @@ class _CORSHandler(SimpleHTTPRequestHandler):
         # Reset server cache so next genre-tracks call sees updated data
         _canonical_plays = None
         _canonical_plays_loaded = False
+
+    # ── GET /api/graphs ───────────────────────────────────────────────
+    def _handle_list_graphs(self) -> None:
+        """Return a list of graph JSON files in the serve directory.
+
+        If a ``_graphs.json`` manifest exists (written by the notebook),
+        use it directly.  Otherwise scan for ``*.json`` files that contain
+        ``"points"`` in the first 500 bytes.
+        """
+        serve_dir = Path(self.directory)
+        manifest = serve_dir / "_graphs.json"
+        if manifest.is_file():
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                self._json_response(200, data)
+                return
+            except Exception:
+                pass  # fall through to scan
+
+        graphs: List[Dict[str, Any]] = []
+        for f in sorted(serve_dir.glob("*.json")):
+            if f.name.startswith("_"):
+                continue
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    head = fh.read(500)
+                    if '"points"' not in head:
+                        continue
+            except Exception:
+                continue
+            graphs.append(
+                {
+                    "filename": f.name,
+                    "label": f.stem.replace("_", " ").replace("-", " ").title(),
+                    "sizeMB": round(f.stat().st_size / (1024 * 1024), 1),
+                }
+            )
+        self._json_response(200, {"graphs": graphs})
 
     # ── helpers ──────────────────────────────────────────────────────
     def _json_response(self, code: int, data: Any) -> None:

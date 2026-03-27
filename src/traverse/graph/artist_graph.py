@@ -124,6 +124,7 @@ def build_artist_graph(
     artist_genres: Dict[str, Set[str]] = {}
     artist_styles: Dict[str, Set[str]] = {}
     artist_all_tags: Dict[str, Set[str]] = {}
+    artist_tag_counts: Dict[str, Counter[str]] = {}
     # Per-type edge-tag sets for require_all_tag_types filtering
     artist_tags_by_type: Dict[str, Dict[str, Set[str]]] = (
         {tt: {} for tt in tag_types} if _require_all else {}
@@ -181,10 +182,16 @@ def build_artist_graph(
                 artist_all_tags[aval] = set()
                 artist_genres[aval] = set()
                 artist_styles[aval] = set()
+                artist_tag_counts[aval] = Counter()
 
             artist_all_tags[aval].update(edge_tags)
             artist_genres[aval].update(genre_tags)
             artist_styles[aval].update(style_tags)
+            # Count every genre/style occurrence per record for frequency ranking
+            for g in genre_tags:
+                artist_tag_counts[aval][g] += 1
+            for s in style_tags:
+                artist_tag_counts[aval][s] += 1
 
             # Track per-type edge tags for AND filtering
             if _require_all:
@@ -461,6 +468,10 @@ def build_artist_graph(
             pt["genres"] = genres_str
         if styles_str:
             pt["styles"] = styles_str
+        # Per-record tag frequency counts for frontend ranking
+        tc = artist_tag_counts.get(key)
+        if tc:
+            pt["tag_counts"] = dict(tc)
         pt["external_links"] = build_external_links(pt)
         points.append(pt)
 

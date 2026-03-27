@@ -150,6 +150,131 @@ export function computeLinkColors(links: any[], gradientName: string, opacity: n
   }
 }
 
+/**
+ * Filter full loaded inputs down to a single community's points + internal edges,
+ * re-running prepareCosmographData for the subset. Used on mobile to avoid
+ * crashing the WebGL context with large graphs.
+ */
+export async function filterToCommunity(
+  full: LoadedInputs,
+  communityKey: string,
+): Promise<LoadedInputs> {
+  const { clusterField, clusterGroups, raw, meta } = full;
+  const group = clusterGroups.get(communityKey);
+  if (!clusterField || !group) return full;
+
+  // Collect point ids in this community
+  const idxSet = new Set(group.indices);
+  const points = group.indices.map(i => ({ ...raw.points[i] }));
+  const pointIdSet = new Set(points.map(p => String(p.id)));
+
+  // Keep only links where both endpoints are in the community
+  const links = raw.links
+    .filter(l => pointIdSet.has(String(l.source)) && pointIdSet.has(String(l.target)))
+    .map(l => ({ ...l }));
+
+  // Serialize nested fields
+  for (const p of points) {
+    if (p.external_links != null && typeof p.external_links !== 'string') {
+      p.external_links = JSON.stringify(p.external_links);
+    }
+  }
+
+  computeLinkColors(links, 'plasma', 0.8);
+
+  const ptTime = normalizeTimeField(points, ['first_seen_ts', 'first_seen', 'ts', 'time', 'date']);
+  const lkTime = normalizeTimeField(links, ['first_seen_ts', 'first_seen', 'ts', 'time', 'date']);
+
+  const pointIncludeCols = ['label'];
+  if (clusterField) pointIncludeCols.push(clusterField);
+
+  const dataConfig: any = {
+    points: {
+      pointIdBy: 'id',
+      pointLabelBy: 'label',
+      pointIncludeColumns: pointIncludeCols,
+      ...(ptTime.has ? { pointTimeBy: 'first_seen_ts' } : {}),
+      ...(clusterField ? { pointClusterBy: clusterField } : {}),
+    },
+    links: {
+      linkSourceBy: 'source',
+      linkTargetsBy: ['target'],
+      linkIncludeColumns: [
+        ...(links.some(l => typeof l.weight === 'number') ? ['weight'] : []),
+        '_color',
+        ...(lkTime.has ? ['first_seen_ts'] : []),
+      ],
+      ...(lkTime.has ? { linkTimeBy: 'first_seen_ts' } : {}),
+      ...(links.some(l => typeof l.weight === 'number') ? {
+        linkColorBy: '_color',
+        linkColorStrategy: 'direct',
+        linkWidthBy: 'weight',
+      } : {}),
+    },
+    labels: { enabled: true, maxLabelCount: 10000 },
+    timeline: (ptTime.has || lkTime.has) ? { enabled: true } : undefined,
+  };
+
+  const prepared = await prepareCosmographData(dataConfig, points, links);
+
+  const idToIndex = new Map<string, number>();
+  points.forEach((p, i) => { if (p?.id != null) idToIndex.set(String(p.id), i); });
+
+  const edgeToIndex = new Map<string, number>();
+  links.forEach((e, i) => {
+    if (e?.source != null && e?.target != null) {
+      edgeToIndex.set(edgeKey(String(e.source), String(e.target)), i);
+    }
+  });
+
+  const maxWeight = links.reduce((mx, l) => Math.max(mx, typeof l.weight === 'number' ? l.weight : 0), 1);
+
+  // Keep full clusterGroups for the community list, but raw is now filtered
+  return {
+    prepared,
+    hasPointTime: !!ptTime.has,
+    hasLinkTime: !!lkTime.has,
+    hasCluster: full.hasCluster,
+    clusterField,
+    clusterGroups: full.clusterGroups,
+    raw: { points, links },
+    idToIndex,
+    edgeToIndex,
+    maxWeight,
+    meta,
+  };
+}
+
+/**
+ * Apply server-side cluster assignments to an already-loaded dataset,
+ * rebuilding clusterGroups so the frontend can color/filter by community.
+ */
+export function applyClusterAssignments(
+  inputs: LoadedInputs,
+  assignments: Record<string, number>,
+  field: string = 'community',
+): LoadedInputs {
+  for (const pt of inputs.raw.points) {
+    const cid = assignments[String(pt.id)];
+    if (cid !== undefined) (pt as any)[field] = cid;
+  }
+  const clusterGroups = new Map<string, ClusterGroup>();
+  const tmp = new Map<string, number[]>();
+  inputs.raw.points.forEach((p: any, i: number) => {
+    const val = p?.[field];
+    if (val == null) return;
+    const key = String(val);
+    let arr = tmp.get(key);
+    if (!arr) { arr = []; tmp.set(key, arr); }
+    arr.push(i);
+  });
+  const sorted = [...tmp.entries()].sort((a, b) => b[1].length - a[1].length);
+  for (const [key, indices] of sorted) {
+    clusterGroups.set(key, { count: indices.length, indices });
+  }
+  return { ...inputs, hasCluster: true, clusterField: field, clusterGroups };
+}
+
 export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
   const resp = await fetch(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);

@@ -28,6 +28,7 @@ nul
 
 # Local outputs
 _out/
+notebooks/
 *.parquet
 *.csv
 *.json
