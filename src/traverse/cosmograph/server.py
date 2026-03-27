@@ -819,11 +819,13 @@ class _CORSHandler(SimpleHTTPRequestHandler):
                         continue
             except Exception:
                 continue
-            graphs.append({
-                "filename": f.name,
-                "label": f.stem.replace("_", " ").replace("-", " ").title(),
-                "sizeMB": round(f.stat().st_size / (1024 * 1024), 1),
-            })
+            graphs.append(
+                {
+                    "filename": f.name,
+                    "label": f.stem.replace("_", " ").replace("-", " ").title(),
+                    "sizeMB": round(f.stat().st_size / (1024 * 1024), 1),
+                }
+            )
         self._json_response(200, {"graphs": graphs})
 
     # ── helpers ──────────────────────────────────────────────────────
