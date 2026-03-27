@@ -1,6 +1,12 @@
 html, body, #root {
   height: 100%;
+  width: 100%;
   margin: 0;
+  padding: 0;
   overflow: hidden;
   background: #1a1a1a;
+  /* Prevent pull-to-refresh and overscroll on mobile */
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
 }

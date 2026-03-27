@@ -25,6 +25,18 @@
   line-height: 1.1;
 }
 
+/* ── Build version overlay (bottom-left) ── */
+.app-build {
+  position: absolute;
+  bottom: 62px;
+  left: 12px;
+  z-index: 13;
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  color: #666;
+  pointer-events: none;
+}
+
 /* Label classes applied by your config */
 .genre-label,
 .cluster-label {
@@ -658,8 +670,8 @@
 /* ── Global activity spinner ── */
 .global-spinner {
   position: absolute;
-  bottom: 12px;
-  right: 12px;
+  top: 12px;
+  left: 12px;
   z-index: 15;
   display: flex;
   align-items: center;
@@ -900,107 +912,202 @@
   margin-top: 4px;
 }
 
-/* ── Left toolbar ── */
-.toolbar {
+/* ── Top toolbar (graph selector) ── */
+.top-toolbar {
   position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 40px;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 12;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  padding: 6px 0;
-  gap: 2px;
-  background: rgba(20, 20, 20, 0.92);
-  border-right: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(10px);
+  padding: 6px 12px;
+  gap: 8px;
+  background: rgba(30, 30, 30, var(--panel-bg-opacity, 0.78));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.25),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
   font-family: system-ui, sans-serif;
 }
 
-.toolbar-collapsed {
-  width: auto;
-  background: none;
-  border-right: none;
-  backdrop-filter: none;
-  padding: 6px;
+.graph-select {
+  background: rgba(255, 255, 255, 0.08);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 13px;
+  min-width: 200px;
+  font-family: system-ui, sans-serif;
+  outline: none;
+  cursor: pointer;
+}
+.graph-select:focus {
+  border-color: rgba(0, 229, 255, 0.4);
+}
+.graph-select option {
+  background: #1e1e1e;
+  color: #eee;
 }
 
-.toolbar-collapse-btn,
-.toolbar-expand-btn {
-  width: 32px;
-  height: 32px;
+.graph-load-btn {
+  background: rgba(0, 229, 255, 0.2);
+  color: #00e5ff;
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-family: system-ui, sans-serif;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.graph-load-btn:hover {
+  background: rgba(0, 229, 255, 0.35);
+}
+.graph-load-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auto-cluster-toggle {
+  color: #aaa;
+  font-size: 12px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: none;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  color: #ccc;
-  font-size: 16px;
+  gap: 4px;
   cursor: pointer;
-  flex-shrink: 0;
-  margin-bottom: 4px;
+  white-space: nowrap;
+  user-select: none;
 }
-.toolbar-collapse-btn:hover,
-.toolbar-expand-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+.auto-cluster-toggle input[type="checkbox"] {
+  accent-color: #00e5ff;
+}
+
+/* ── Floating dock toolbar (macOS Dock style) ── */
+.toolbar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 6px 10px;
+  gap: 4px;
+  background: rgba(30, 30, 30, var(--panel-bg-opacity, 0.78));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.25),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.08);
+  font-family: system-ui, sans-serif;
 }
 
 .toolbar-btn {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
   border: 1px solid transparent;
-  border-radius: 6px;
-  color: #999;
-  font-size: 15px;
+  border-radius: 10px;
+  color: #aaa;
+  font-size: 16px;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
   flex-shrink: 0;
   padding: 0;
   line-height: 1;
 }
 .toolbar-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #e0e0e0;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f0f0f0;
+  transform: scale(1.12);
 }
 .toolbar-btn.active {
   background: rgba(0, 229, 255, 0.15);
   border-color: rgba(0, 229, 255, 0.4);
   color: #00e5ff;
 }
+/* Active indicator dot (like macOS Dock) */
+.toolbar-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #00e5ff;
+}
+.toolbar-btn {
+  position: relative;
+}
+
+/* Dock separator between tools and settings */
+.toolbar-separator {
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
 
 /* ── Tool panel (shared base for toolbar-managed panels) ── */
 .tool-panel {
   position: absolute;
-  left: 48px;
-  top: 8px;
+  left: 8px;
+  bottom: 62px;
+  top: auto;
   z-index: 10;
-  max-height: calc(100vh - 16px);
+  height: 220px;
+  max-height: 260px;
+  min-width: 280px;
   display: flex;
   flex-direction: column;
-  background: rgba(30, 30, 30, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(30, 30, 30, var(--panel-bg-opacity, 0.92));
+  border: 1px solid rgba(255, 255, 255, calc(var(--panel-bg-opacity, 0.92) * 0.16));
   border-radius: 8px;
   font-family: system-ui, sans-serif;
   font-size: 13px;
   color: #e0e0e0;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
   overflow: hidden;
   box-sizing: border-box;
 }
 
 .tool-panel.detail-tool-panel {
-  top: 8px;
-  bottom: 80px;
-  max-height: calc(100vh - 88px);
+  height: 280px;
+  max-height: 320px;
 }
+
+/* ── Stagger default panel positions so they don't overlap ── */
+.tool-panel.community-panel       { left: 8px; }
+.tool-panel.cluster-algo-panel    { left: 8px; }
+.tool-panel.community-node-panel  { left: 300px; }
+.tool-panel.edge-analysis-panel   { left: 8px; }
+.tool-panel.paths-panel           { left: 8px; }
+.tool-panel.genre-detail-panel    { left: 300px; }
+.tool-panel.corrections-panel     { left: 8px; }
+.tool-panel.search-panel          { left: 8px; }
+.tool-panel.genre-search-panel    { left: 300px; }
+.tool-panel.overlap-panel         { left: 8px; }
+.tool-panel.selection-panel       { left: 300px; }
+.tool-panel.customize-panel       { left: 600px; }
 
 /* ── Panel resize handles ── */
 .panel-resize-handle {
@@ -1697,4 +1804,119 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Mobile / narrow viewport responsive overrides
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* ── Toolbar: full-width dock at bottom on mobile ── */
+  .toolbar {
+    bottom: 6px;
+    left: 4px;
+    right: 4px;
+    transform: none;
+    width: auto;
+    padding: 4px 6px;
+    gap: 2px;
+    border-radius: 14px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    justify-content: center;
+  }
+  .toolbar-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+    border-radius: 8px;
+  }
+
+  /* ── Panels: full-width overlay from bottom ── */
+  .tool-panel {
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 56px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    max-height: 55vh !important;
+    border-radius: 12px 12px 0 0;
+  }
+  .tool-panel.detail-tool-panel {
+    top: auto !important;
+    bottom: 56px !important;
+    max-height: 60vh !important;
+  }
+
+  /* Panels that have fixed widths → fluid */
+  .community-panel,
+  .edge-analysis-panel,
+  .clustering-panel,
+  .paths-panel,
+  .overlap-panel,
+  .album-list-panel {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  .genre-detail-panel {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  /* Correction form → bottom overlay instead of absolute left */
+  .correction-form {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 52px !important;
+    width: auto !important;
+  }
+
+  /* Cluster algo panel */
+  .cluster-algo-panel {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  /* ── Status / title bar: smaller on mobile ── */
+  .genre-label {
+    font-size: 10px !important;
+    padding: 1px 4px !important;
+  }
+
+  /* ── Draggable panels: disable drag on mobile, use fixed positioning ── */
+  .draggable-panel {
+    transform: none !important;
+  }
+
+  /* ── Cosmograph selection buttons: push above bottom toolbar ── */
+  .cosmograph-selection-buttons {
+    bottom: 52px !important;
+  }
+
+  /* ── Search panel on mobile ── */
+  .search-panel {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+/* Extra small screens (phones in portrait) */
+@media (max-width: 480px) {
+  .toolbar {
+    gap: 1px;
+    padding: 3px 4px;
+  }
+  .toolbar-btn {
+    width: 28px;
+    height: 28px;
+    font-size: 13px;
+  }
+  .tool-panel {
+    max-height: 50vh !important;
+    font-size: 12px;
+  }
+  .genre-label {
+    font-size: 9px !important;
+  }
 }

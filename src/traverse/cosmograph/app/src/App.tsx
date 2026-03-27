@@ -10,7 +10,7 @@ import {
   type CosmographConfig,
   type Cosmograph as CosmographInstance
 } from '@cosmograph/react';
-import { loadAndPrepare, computeLinkColors, GRADIENT_PRESETS, type LoadedInputs, type ClusterGroup } from './DataLoader';
+import { loadAndPrepare, filterToCommunity, computeLinkColors, applyClusterAssignments, GRADIENT_PRESETS, type LoadedInputs, type ClusterGroup } from './DataLoader';
 
 interface SavedCommunity {
   clusterValue: string;
@@ -231,9 +231,19 @@ function discogsTrackUrl(trackName: string, artistName: string): string {
 }
 
 export default function App() {
+  // Graph selector state
+  const [availableGraphs, setAvailableGraphs] = useState<{filename: string; label: string; sizeMB: number}[]>([]);
+  const [selectedGraph, setSelectedGraph] = useState<string>(() => {
+    const p = new URLSearchParams(window.location.search).get('data');
+    return p ? p.replace(/^\//, '') : '';  // empty = will be set from manifest
+  });
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [autoCluster, setAutoCluster] = useState(true);
+
+  // dataUrl derived from selectedGraph — drives localStorage keys + API calls
   const dataUrl = useMemo(
-    () => new URLSearchParams(window.location.search).get('data') ?? '/cosmo_genres_timeline.json',
-    []
+    () => selectedGraph ? '/' + selectedGraph : '/cosmo_genres_timeline.json',
+    [selectedGraph]
   );
 
   const [loaded, setLoaded] = useState<LoadedInputs | null>(null);
@@ -245,13 +255,16 @@ export default function App() {
   const [recolorKick, setRecolorKick] = useState(0);
   const [status, setStatus] = useState('Loading…');
 
+  // Mobile: render one community at a time to avoid WebGL crash
+  const isMobile = useMemo(() => window.innerWidth <= 768, []);
+  const fullLoadedRef = useRef<LoadedInputs | null>(null);
+
   const cosmoRef = useRef<CosmographInstance | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
 
   // Toolbar state
-  type ToolId = 'clustering' | 'communities' | 'edges' | 'paths' | 'detail' | 'corrections' | 'customize' | 'search' | 'selection' | 'overlap';
-  const [toolbarOpen, setToolbarOpen] = useState(true);
-  const [openTools, setOpenTools] = useState<Set<ToolId>>(new Set(['detail']));
+  type ToolId = 'clustering' | 'communities' | 'edges' | 'paths' | 'detail' | 'corrections' | 'customize' | 'search' | 'selection' | 'overlap' | 'genre-search';
+  const [openTools, setOpenTools] = useState<Set<ToolId>>(new Set());
 
   const toggleTool = useCallback((id: ToolId) => {
     setOpenTools(prev => {
@@ -309,6 +322,10 @@ export default function App() {
   const [pathCommunityA, setPathCommunityA] = useState<string | null>(null);
   const [pathCommunityB, setPathCommunityB] = useState<string | null>(null);
   const [pathRestrict, setPathRestrict] = useState(false);
+  // Node-to-node path mode
+  const [pathMode, setPathMode] = useState<'community' | 'node'>('node');
+  const [pathNodeA, setPathNodeA] = useState('');
+  const [pathNodeB, setPathNodeB] = useState('');
   const [pathResults, setPathResults] = useState<PathResult[]>([]);
   const [pathLoading, setPathLoading] = useState(false);
   const [pathError, setPathError] = useState<string | null>(null);
@@ -332,6 +349,10 @@ export default function App() {
   // Edge customization state
   const [edgeGradient, setEdgeGradient] = useState('plasma');
   const [edgeOpacity, setEdgeOpacity] = useState(0.8);
+  const [panelOpacity, setPanelOpacity] = useState(0.65);
+  // Advanced tool visibility (hidden by default, toggled in settings)
+  const [showClusteringTool, setShowClusteringTool] = useState(false);
+  const [showEdgeTool, setShowEdgeTool] = useState(false);
   const [edgeWidthMin, setEdgeWidthMin] = useState(0.3);
   const [edgeWidthMax, setEdgeWidthMax] = useState(2.0);
 
@@ -358,14 +379,144 @@ export default function App() {
     topTracks: { trackName: string; playCount: number; totalMs: number }[];
   }
   const [overlapMatches, setOverlapMatches] = useState<Map<string, OverlapMatch> | null>(null);
-  const [overlapMode, setOverlapMode] = useState<'dim' | 'hide'>('dim');
+  const [overlapHighlight, setOverlapHighlight] = useState(false);
   const [overlapOpacity, setOverlapOpacity] = useState(0.225);
-  const [overlapColorize, setOverlapColorize] = useState(false);
+  const [overlapHeatmap, setOverlapHeatmap] = useState(false);
   const [overlapLoading, setOverlapLoading] = useState(false);
   const [overlapError, setOverlapError] = useState<string | null>(null);
   const [overlapSummary, setOverlapSummary] = useState<{ matched: number; total: number } | null>(null);
   const [overlapInputMode, setOverlapInputMode] = useState<'path' | 'upload'>('path');
   const [overlapPath, setOverlapPath] = useState('');
+
+  // Genre search state
+  const [genreSearchQuery, setGenreSearchQuery] = useState('');
+  const [genreSearchHighlight, setGenreSearchHighlight] = useState(false);
+  const [genreSearchHeatmap, setGenreSearchHeatmap] = useState(false);
+
+  // Build genre index: genre string → Set of point ids that have it
+  const genreIndex = useMemo(() => {
+    const idx = new Map<string, Set<string>>();
+    if (!loaded) return idx;
+    for (const pt of loaded.raw.points) {
+      const id = String(pt.id ?? '');
+      for (const field of ['genres', 'styles']) {
+        const raw = pt[field];
+        if (!raw || typeof raw !== 'string') continue;
+        for (const tag of raw.split(/\s*\|\s*/)) {
+          const t = tag.trim().toLowerCase();
+          if (!t) continue;
+          let s = idx.get(t);
+          if (!s) { s = new Set(); idx.set(t, s); }
+          s.add(id);
+        }
+      }
+    }
+    return idx;
+  }, [loaded]);
+
+  // All unique genre/style tags for autocomplete
+  const allTags = useMemo(() =>
+    [...genreIndex.keys()].sort(),
+  [genreIndex]);
+
+  // Genre search matches: set of point ids matching the query
+  const genreSearchMatches = useMemo(() => {
+    const q = genreSearchQuery.trim().toLowerCase();
+    if (!q) return null;
+    // Support multiple comma-separated terms (OR logic)
+    const terms = q.split(',').map(t => t.trim()).filter(Boolean);
+    const matched = new Set<string>();
+    for (const term of terms) {
+      // Exact match first, then substring
+      const exact = genreIndex.get(term);
+      if (exact) {
+        for (const id of exact) matched.add(id);
+      } else {
+        for (const [tag, ids] of genreIndex) {
+          if (tag.includes(term)) {
+            for (const id of ids) matched.add(id);
+          }
+        }
+      }
+    }
+    return matched.size > 0 ? matched : null;
+  }, [genreSearchQuery, genreIndex]);
+
+  // Genre search heatmap: count how many matching tags each node has
+  const genreSearchCounts = useMemo(() => {
+    const q = genreSearchQuery.trim().toLowerCase();
+    if (!q || !genreSearchMatches) return null;
+    const terms = q.split(',').map(t => t.trim()).filter(Boolean);
+    const counts = new Map<string, number>();
+    for (const term of terms) {
+      const exact = genreIndex.get(term);
+      if (exact) {
+        for (const id of exact) counts.set(id, (counts.get(id) ?? 0) + 1);
+      } else {
+        for (const [tag, ids] of genreIndex) {
+          if (tag.includes(term)) {
+            for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1);
+          }
+        }
+      }
+    }
+    return counts;
+  }, [genreSearchQuery, genreSearchMatches, genreIndex]);
+
+  // Genre search sorted results: sort by % of matching tags across all records
+  const genreSearchSorted = useMemo(() => {
+    if (!loaded || !genreSearchMatches || genreSearchMatches.size === 0) return [];
+    const q = genreSearchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const terms = q.split(',').map(t => t.trim()).filter(Boolean);
+
+    // For each matching point, compute match % from tag_counts
+    const scored: { point: any; pct: number; matchCount: number; totalCount: number }[] = [];
+    for (const pt of loaded.raw.points) {
+      const id = String(pt.id ?? '');
+      if (!genreSearchMatches.has(id)) continue;
+
+      const tc: Record<string, number> | undefined = pt.tag_counts;
+      if (tc) {
+        // Sum counts of matching tags vs total tag occurrences
+        let totalCount = 0;
+        let matchCount = 0;
+        for (const [tag, count] of Object.entries(tc)) {
+          totalCount += count;
+          const tagLower = tag.toLowerCase();
+          for (const term of terms) {
+            if (tagLower === term || tagLower.includes(term)) {
+              matchCount += count;
+              break;
+            }
+          }
+        }
+        const pct = totalCount > 0 ? matchCount / totalCount : 0;
+        scored.push({ point: pt, pct, matchCount, totalCount });
+      } else {
+        // Fallback for album nodes or missing tag_counts: count unique matching tags / total tags
+        let total = 0;
+        let matched = 0;
+        for (const field of ['genres', 'styles']) {
+          const raw = pt[field];
+          if (!raw || typeof raw !== 'string') continue;
+          for (const tag of raw.split(/\s*\|\s*/)) {
+            const t = tag.trim().toLowerCase();
+            if (!t) continue;
+            total++;
+            for (const term of terms) {
+              if (t === term || t.includes(term)) { matched++; break; }
+            }
+          }
+        }
+        const pct = total > 0 ? matched / total : 0;
+        scored.push({ point: pt, pct, matchCount: matched, totalCount: total });
+      }
+    }
+
+    scored.sort((a, b) => b.pct - a.pct || b.matchCount - a.matchCount);
+    return scored;
+  }, [loaded, genreSearchMatches, genreSearchQuery]);
 
   // Stable random colors for communities (survives re-renders, cleared on re-cluster)
   const generatedColorsRef = useRef(new Map<string, string>());
@@ -408,6 +559,7 @@ export default function App() {
   const selectionDrag = useDrag();
   const pathsDrag = useDrag();
   const overlapDrag = useDrag();
+  const genreSearchDrag = useDrag();
 
   // Panel resize handles (vertical + horizontal)
   const clusterResize = usePanelResize();
@@ -420,6 +572,7 @@ export default function App() {
   const searchResize = usePanelResize();
   const pathsResize = usePanelResize();
   const overlapResize = usePanelResize();
+  const genreSearchResize = usePanelResize();
 
   // Build color map: cluster value → color (custom overrides > stable random)
   const clusterColorMap = useMemo(() => {
@@ -509,47 +662,196 @@ export default function App() {
     return matches;
   }, [searchQuery, loaded]);
 
+  // Helper: build base CosmographConfig from LoadedInputs
+  const buildBaseCfg = useCallback((inputs: LoadedInputs): CosmographConfig => ({
+    ...(inputs.prepared?.cosmographConfig ?? {}),
+    points: inputs.prepared?.points,
+    links:  inputs.prepared?.links,
+    showLabels: true,
+    showDynamicLabels: true,
+    showTopLabels: true,
+    showTopLabelsLimit: 200,
+    pointLabelClassName: 'genre-label',
+    clusterLabelClassName: 'cluster-label',
+    pointLabelColor: '#ffffff',
+    clusterLabelColor: '#ffffff',
+    simulationFriction: 0.7,
+    simulationDecay: 3000,
+    enableSimulationDuringZoom: true,
+    ...(isMobile ? {
+      curvedLinks: false,
+    } : {
+      curvedLinks: true,
+      curvedLinkSegments: 19,
+      curvedLinkWeight: 0.8,
+      curvedLinkControlPointDistance: 0.5,
+    }),
+    linkColorBy: '_color',
+    linkWidthBy: 'weight',
+    linkWidthRange: [edgeWidthMin, edgeWidthMax],
+    ...(inputs.hasCluster ? {
+      simulationCluster: 0.1,
+      showClusterLabels: false,
+      scaleClusterLabels: true,
+    } : {}),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [isMobile]);
+
+  // Fetch available graphs on mount
   useEffect(() => {
+    fetch('/api/graphs')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data?.graphs) && data.graphs.length > 0) {
+          setAvailableGraphs(data.graphs);
+          // Default to first graph alphabetically if no URL param was given
+          setSelectedGraph(prev => prev || data.graphs[0].filename);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Load a new graph (called from top toolbar)
+  const handleLoadGraph = useCallback(async () => {
+    if (!selectedGraph || graphLoading) return;
+    setGraphLoading(true);
+    setStatus('Loading graph…');
+    try {
+      const url = '/' + selectedGraph;
+      const inputs = await loadAndPrepare(url);
+      fullLoadedRef.current = inputs;
+
+      let renderInputs = inputs;
+
+      // Auto-cluster via /api/cluster
+      if (autoCluster) {
+        setStatus('Running community detection…');
+        try {
+          const clusterRes = await fetch('/api/cluster', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              dataFile: selectedGraph,
+              algorithm: 'louvain',
+              params: { resolution: 1.0, seed: 42 },
+            }),
+          });
+          const clusterData = await clusterRes.json();
+          if (clusterData.assignments && Object.keys(clusterData.assignments).length > 0) {
+            renderInputs = applyClusterAssignments(inputs, clusterData.assignments);
+            fullLoadedRef.current = renderInputs;
+          }
+        } catch (e) {
+          console.warn('Auto-clustering failed:', e);
+        }
+      }
+
+      // On mobile with clusters, filter to largest community
+      let autoClusterKey: string | null = null;
+      if (isMobile && renderInputs.hasCluster && renderInputs.clusterGroups.size > 0) {
+        setStatus('Filtering to largest community…');
+        let maxKey = '';
+        let maxCount = 0;
+        for (const [key, group] of renderInputs.clusterGroups) {
+          if (group.count > maxCount) { maxCount = group.count; maxKey = key; }
+        }
+        autoClusterKey = maxKey;
+        renderInputs = await filterToCommunity(renderInputs, maxKey);
+      }
+
+      // Reset all visualization state
+      setSelectedGenre(null);
+      setSelectedAlbum(null);
+      setSelectedEdge(null);
+      setEdgeDetailA(null);
+      setEdgeDetailB(null);
+      setCommunityNames(new Map());
+      setCommunityColors(new Map());
+      setSavedCommunities([]);
+      setSavedEdges([]);
+      setOverlapMatches(null);
+      setOverlapSummary(null);
+      setGenreSearchQuery('');
+      setGenreSearchHighlight(false);
+      setGenreSearchHeatmap(false);
+      setOpenTools(new Set());
+      setClusterOn(false);
+      setHomogeneityMode(false);
+      setSelectedPath(null);
+      setPathResults([]);
+      setEdgeResults([]);
+      setFocusedCluster(null);
+      setFullData(null);
+      setSearchQuery('');
+
+      // Apply
+      const base = buildBaseCfg(renderInputs);
+      setLoaded(renderInputs);
+      setCfg(base);
+      if (autoClusterKey) setSelectedCluster(autoClusterKey);
+      if (renderInputs.hasCluster) {
+        setColorCommunities(true);
+        setTimeout(() => setRecolorKick(k => k + 1), 80);
+      } else {
+        setColorCommunities(false);
+      }
+      setStatus('Ready');
+
+      // Restore persisted community names
+      try {
+        const namesJson = localStorage.getItem(`traverse:communityNames:${url}`);
+        if (namesJson) setCommunityNames(new Map(JSON.parse(namesJson)));
+        const savedJson = localStorage.getItem(`traverse:savedCommunities:${url}`);
+        if (savedJson) setSavedCommunities(JSON.parse(savedJson));
+        const edgesJson = localStorage.getItem(`traverse:savedEdges:${url}`);
+        if (edgesJson) setSavedEdges(JSON.parse(edgesJson));
+      } catch { /* ignore corrupt localStorage */ }
+    } catch (e: any) {
+      console.error(e);
+      setStatus(`Error: ${e?.message ?? e}`);
+    } finally {
+      setGraphLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGraph, autoCluster, graphLoading, isMobile]);
+
+  // Initial graph load — waits for selectedGraph to be set (from URL param or manifest)
+  const initialLoadDone = useRef(false);
+  useEffect(() => {
+    if (!selectedGraph || initialLoadDone.current) return;
+    initialLoadDone.current = true;
     let alive = true;
     (async () => {
       try {
         setStatus('Loading JSON…');
-        const inputs = await loadAndPrepare(dataUrl);
+        const url = '/' + selectedGraph;
+        const inputs = await loadAndPrepare(url);
         if (!alive) return;
 
-        const base: CosmographConfig = {
-          ...(inputs.prepared?.cosmographConfig ?? {}),
-          points: inputs.prepared?.points,
-          links:  inputs.prepared?.links,
-          // Label config — flat keys, not nested (Cosmograph ignores nested `labels` obj)
-          showLabels: true,
-          showDynamicLabels: true,
-          showTopLabels: true,
-          showTopLabelsLimit: 200,
-          pointLabelClassName: 'genre-label',
-          clusterLabelClassName: 'cluster-label',
-          pointLabelColor: '#ffffff',
-          clusterLabelColor: '#ffffff',
-          simulationFriction: 0.7,
-          simulationDecay: 3000,
-          curvedLinks: true,
-          curvedLinkSegments: 19,
-          curvedLinkWeight: 0.8,
-          curvedLinkControlPointDistance: 0.5,
-          // Link weight visual encoding (colors pre-computed as _color)
-          linkColorBy: '_color',
-          linkWidthBy: 'weight',
-          linkWidthRange: [edgeWidthMin, edgeWidthMax],
-          ...(inputs.hasCluster ? {
-            simulationCluster: 0.1,
-            showClusterLabels: false,
-            scaleClusterLabels: true,
-          } : {}),
-        };
+        // Always store the full dataset for community switching
+        fullLoadedRef.current = inputs;
 
-        setLoaded(inputs);
+        // On mobile with clusters, auto-filter to the largest community
+        let renderInputs = inputs;
+        let autoClusterKey: string | null = null;
+        if (isMobile && inputs.hasCluster && inputs.clusterGroups.size > 0) {
+          setStatus('Filtering to largest community…');
+          let maxKey = '';
+          let maxCount = 0;
+          for (const [key, group] of inputs.clusterGroups) {
+            if (group.count > maxCount) { maxCount = group.count; maxKey = key; }
+          }
+          autoClusterKey = maxKey;
+          renderInputs = await filterToCommunity(inputs, maxKey);
+          if (!alive) return;
+        }
+
+        const base = buildBaseCfg(renderInputs);
+
+        setLoaded(renderInputs);
         setCfg(base);
-        if (inputs.hasCluster) {
+        if (autoClusterKey) setSelectedCluster(autoClusterKey);
+        if (renderInputs.hasCluster) {
           setColorCommunities(true);
           setTimeout(() => setRecolorKick(k => k + 1), 80);
         }
@@ -557,11 +859,11 @@ export default function App() {
 
         // Restore persisted community names and saved communities
         try {
-          const namesJson = localStorage.getItem(`traverse:communityNames:${dataUrl}`);
+          const namesJson = localStorage.getItem(`traverse:communityNames:${url}`);
           if (namesJson) setCommunityNames(new Map(JSON.parse(namesJson)));
-          const savedJson = localStorage.getItem(`traverse:savedCommunities:${dataUrl}`);
+          const savedJson = localStorage.getItem(`traverse:savedCommunities:${url}`);
           if (savedJson) setSavedCommunities(JSON.parse(savedJson));
-          const edgesJson = localStorage.getItem(`traverse:savedEdges:${dataUrl}`);
+          const edgesJson = localStorage.getItem(`traverse:savedEdges:${url}`);
           if (edgesJson) setSavedEdges(JSON.parse(edgesJson));
         } catch { /* ignore corrupt localStorage */ }
         console.log('App: time present? points=', inputs.hasPointTime, 'links=', inputs.hasLinkTime);
@@ -571,7 +873,27 @@ export default function App() {
       }
     })();
     return () => { alive = false; };
-  }, [dataUrl]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGraph]);
+
+  // Mobile: when user switches community, re-filter data to that community only
+  useEffect(() => {
+    if (!isMobile || !fullLoadedRef.current || selectedCluster == null) return;
+    const full = fullLoadedRef.current;
+    if (!full.hasCluster || !full.clusterGroups.has(selectedCluster)) return;
+
+    let alive = true;
+    setStatus('Switching community…');
+    filterToCommunity(full, selectedCluster).then(filtered => {
+      if (!alive) return;
+      const base = buildBaseCfg(filtered);
+      setLoaded(filtered);
+      setCfg(base);
+      setStatus('Ready');
+    });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, selectedCluster]);
 
   useEffect(() => {
     if (!cfg) return;
@@ -902,6 +1224,13 @@ export default function App() {
     setSelectedEdge(edge);
     setSelectedGenre(null); // clear node selection
     setSelectedAlbum(null);
+    // Auto-open detail panel
+    setOpenTools(prev => {
+      if (prev.has('detail')) return prev;
+      const next = new Set(prev);
+      next.add('detail');
+      return next;
+    });
 
     const srcLabel = loaded?.raw.points.find((p: any) => p.id === edge.source)?.label ?? edge.source;
     const tgtLabel = loaded?.raw.points.find((p: any) => p.id === edge.target)?.label ?? edge.target;
@@ -1148,6 +1477,13 @@ export default function App() {
       // Genre/style tag node
       handleGenreClickRef.current(String(point.label));
     }
+    // Auto-open detail panel when a node is clicked
+    setOpenTools(prev => {
+      if (prev.has('detail')) return prev;
+      const next = new Set(prev);
+      next.add('detail');
+      return next;
+    });
   }, []);
 
   // Stable onClick: fires on every canvas click; index is defined when a point was clicked
@@ -1220,34 +1556,68 @@ export default function App() {
       };
     }
 
-    // Overlap mode → plasma gradient by listen intensity, dim/hide unmatched
-    if (overlapMatches && overlapMatches.size > 0 && overlapColorize) {
-      // Compute max play count for normalization (log scale for better spread)
-      let maxPlays = 1;
-      for (const m of overlapMatches.values()) {
-        if (m.playCount > maxPlays) maxPlays = m.playCount;
+    // Genre search highlight → dim non-matching nodes
+    if (genreSearchMatches && genreSearchMatches.size > 0 && genreSearchHighlight) {
+      let colorFn: (value: any) => string;
+      if (genreSearchHeatmap && genreSearchCounts) {
+        let maxCount = 1;
+        for (const c of genreSearchCounts.values()) {
+          if (c > maxCount) maxCount = c;
+        }
+        const logMax = Math.log1p(maxCount);
+        colorFn = (value: any) => {
+          const c = genreSearchCounts.get(String(value ?? ''));
+          return c ? plasmaColor(Math.log1p(c) / logMax) : DIM_COLOR;
+        };
+      } else {
+        const MATCH_COLOR = '#89b4fa';
+        colorFn = (value: any) =>
+          genreSearchMatches.has(String(value ?? '')) ? MATCH_COLOR : DIM_COLOR;
       }
-      const logMax = Math.log1p(maxPlays);
       return {
         ...base,
-        pointGreyoutOpacity: overlapOpacity,
-        linkGreyoutOpacity: Math.max(0.05, overlapOpacity - 0.02),
         pointColorBy: 'id',
         pointColorStrategy: undefined,
-        pointColorByFn: (value: any) => {
-          const m = overlapMatches.get(String(value ?? ''));
-          if (m) return plasmaColor(Math.log1p(m.playCount) / logMax);
-          return overlapMode === 'hide' ? 'rgba(0,0,0,0)' : DIM_COLOR;
-        },
-        pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
-          pointId && overlapMatches.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
-        ...(overlapMode === 'hide' ? {
-          pointSizeByFn: (_val: any, _idx: number, pointId?: string) =>
-            pointId && overlapMatches.has(String(pointId)) ? undefined : 0,
-        } : {}),
+        pointColorByFn: colorFn,
         showLabels: true,
         showDynamicLabels: true,
         showTopLabels: true,
+        pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
+          pointId && genreSearchMatches.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
+      };
+    }
+
+    // Overlap highlight → dim unmatched nodes, same visual as community selection
+    if (overlapMatches && overlapMatches.size > 0 && overlapHighlight) {
+      const matchedSet = overlapMatches;
+      // Heatmap sub-mode: color by play count (plasma)
+      let colorFn: (value: any) => string;
+      if (overlapHeatmap) {
+        let maxPlays = 1;
+        for (const m of matchedSet.values()) {
+          if (m.playCount > maxPlays) maxPlays = m.playCount;
+        }
+        const logMax = Math.log1p(maxPlays);
+        colorFn = (value: any) => {
+          const m = matchedSet.get(String(value ?? ''));
+          return m ? plasmaColor(Math.log1p(m.playCount) / logMax) : DIM_COLOR;
+        };
+      } else {
+        // Default: matched nodes keep a highlight color, unmatched dim
+        const MATCH_COLOR = '#cba6f7';
+        colorFn = (value: any) =>
+          matchedSet.has(String(value ?? '')) ? MATCH_COLOR : DIM_COLOR;
+      }
+      return {
+        ...base,
+        pointColorBy: 'id',
+        pointColorStrategy: undefined,
+        pointColorByFn: colorFn,
+        showLabels: true,
+        showDynamicLabels: true,
+        showTopLabels: true,
+        pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
+          pointId && matchedSet.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
       };
     }
 
@@ -1297,7 +1667,7 @@ export default function App() {
         clusterColorMap.get(String(value ?? '')) ?? UNKNOWN_COLOR,
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, loaded, selectedCluster, selectedEdge, selectedPath, clusterColorMap, clusterOn, colorCommunities, selectedPointIds, onGraphClick, onGraphLabelClick, homogeneityMode, homogeneityMap, recolorKick, overlapMatches, overlapMode, overlapOpacity, overlapColorize]);
+  }, [cfg, loaded, selectedCluster, selectedEdge, selectedPath, clusterColorMap, clusterOn, colorCommunities, selectedPointIds, onGraphClick, onGraphLabelClick, homogeneityMode, homogeneityMap, recolorKick, overlapMatches, overlapHighlight, overlapOpacity, overlapHeatmap, genreSearchMatches, genreSearchHighlight, genreSearchHeatmap, genreSearchCounts]);
 
   // Imperative selectPoints for Cosmograph's internal selection state
   useEffect(() => {
@@ -1321,8 +1691,17 @@ export default function App() {
       return;
     }
 
-    // Overlap heatmap → select matched nodes so Cosmograph greys out the rest
-    if (overlapMatches && overlapMatches.size > 0 && overlapColorize) {
+    // Genre search highlight → select matched nodes
+    if (genreSearchMatches && genreSearchMatches.size > 0 && genreSearchHighlight) {
+      const matchedIds = Array.from(genreSearchMatches);
+      inst.getPointIndicesByIds(matchedIds).then((indices: number[] | undefined) => {
+        if (indices && indices.length > 0) inst.selectPoints(indices);
+      });
+      return;
+    }
+
+    // Overlap highlight → select matched nodes so Cosmograph greys out the rest
+    if (overlapMatches && overlapMatches.size > 0 && overlapHighlight) {
       const matchedIds = Array.from(overlapMatches.keys());
       inst.getPointIndicesByIds(matchedIds).then((indices: number[] | undefined) => {
         if (indices && indices.length > 0) inst.selectPoints(indices);
@@ -1347,7 +1726,7 @@ export default function App() {
     inst.getPointIndicesByIds(pointIds).then((indices: number[] | undefined) => {
       if (indices && indices.length > 0) inst.selectPoints(indices);
     });
-  }, [loaded, selectedCluster, selectedEdge, selectedPath, overlapMatches, overlapColorize]);
+  }, [loaded, selectedCluster, selectedEdge, selectedPath, overlapMatches, overlapHighlight, genreSearchMatches, genreSearchHighlight]);
 
 
   // ── Apply clustering from server ────────────────────────────────
@@ -1547,8 +1926,19 @@ export default function App() {
   [savedCommunities]);
 
   const handleClusterClick = useCallback((clusterValue: string) => {
-    setSelectedCluster(prev => prev === clusterValue ? null : clusterValue);
-  }, []);
+    // Clear any node/edge selection so the detail panel doesn't show stale content
+    setSelectedGenre(null);
+    setSelectedAlbum(null);
+    setSelectedEdge(null);
+    setEdgeDetailA(null);
+    setEdgeDetailB(null);
+    // On mobile, always switch to the clicked community (no deselect — full graph would crash)
+    if (isMobile) {
+      setSelectedCluster(clusterValue);
+    } else {
+      setSelectedCluster(prev => prev === clusterValue ? null : clusterValue);
+    }
+  }, [isMobile]);
 
   // Run edge analysis on the selected community
   const handleRunEdgeAnalysis = useCallback(async (clusterValue?: string) => {
@@ -1590,25 +1980,43 @@ export default function App() {
 
   // ── Path finding ──────────────────────────────────────────────────
   const handleFindPaths = useCallback(async () => {
-    if (!loaded || !pathCommunityA || !pathCommunityB || pathCommunityA === pathCommunityB) return;
+    if (!loaded) return;
 
-    const groupA = loaded.clusterGroups.get(pathCommunityA);
-    const groupB = loaded.clusterGroups.get(pathCommunityB);
-    if (!groupA || !groupB) return;
+    let aIds: string[];
+    let bIds: string[];
+
+    if (pathMode === 'node') {
+      // Node-to-node: resolve search strings to point IDs
+      const aQ = pathNodeA.trim().toLowerCase();
+      const bQ = pathNodeB.trim().toLowerCase();
+      if (!aQ || !bQ) return;
+      const findId = (q: string) => {
+        const pt = loaded.raw.points.find((p: any) =>
+          String(p.label ?? '').toLowerCase() === q || String(p.id ?? '').toLowerCase() === q
+        );
+        return pt ? String(pt.id) : null;
+      };
+      const aId = findId(aQ);
+      const bId = findId(bQ);
+      if (!aId) { setPathError(`Node not found: "${pathNodeA.trim()}"`); return; }
+      if (!bId) { setPathError(`Node not found: "${pathNodeB.trim()}"`); return; }
+      if (aId === bId) { setPathError('Both endpoints are the same node'); return; }
+      aIds = [aId];
+      bIds = [bId];
+    } else {
+      // Community-to-community
+      if (!pathCommunityA || !pathCommunityB || pathCommunityA === pathCommunityB) return;
+      const groupA = loaded.clusterGroups.get(pathCommunityA);
+      const groupB = loaded.clusterGroups.get(pathCommunityB);
+      if (!groupA || !groupB) return;
+      aIds = groupA.indices.map(i => loaded.raw.points[i]?.id).filter((id: any): id is string => id != null).map(String);
+      bIds = groupB.indices.map(i => loaded.raw.points[i]?.id).filter((id: any): id is string => id != null).map(String);
+    }
 
     setPathLoading(true);
     setPathError(null);
     setPathResults([]);
     setSelectedPath(null);
-
-    const communityAIds = groupA.indices
-      .map(i => loaded.raw.points[i]?.id)
-      .filter((id: any): id is string => id != null)
-      .map(String);
-    const communityBIds = groupB.indices
-      .map(i => loaded.raw.points[i]?.id)
-      .filter((id: any): id is string => id != null)
-      .map(String);
 
     const dataFile = dataUrl.replace(/^\//, '');
 
@@ -1618,8 +2026,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dataFile,
-          communityAIds,
-          communityBIds,
+          communityAIds: aIds,
+          communityBIds: bIds,
           restrictToCommunities: pathRestrict,
           maxDiverseAttempts: 200,
         }),
@@ -1639,7 +2047,7 @@ export default function App() {
     } finally {
       setPathLoading(false);
     }
-  }, [loaded, pathCommunityA, pathCommunityB, pathRestrict, dataUrl]);
+  }, [loaded, pathMode, pathNodeA, pathNodeB, pathCommunityA, pathCommunityB, pathRestrict, dataUrl]);
 
   const handlePathSelect = useCallback((path: PathResult | null) => {
     if (!path || selectedPath === path) {
@@ -1909,7 +2317,7 @@ export default function App() {
 
 
   return (
-    <div style={{ height: '100%', width: '100%', position: 'relative' }}>
+    <div style={{ height: '100%', width: '100%', position: 'relative', '--panel-bg-opacity': panelOpacity } as CSSProperties}>
       <div style={{ position: 'absolute', inset: 0 }} onContextMenu={onGraphContextMenu}>
         {finalCfg ? (
           <CosmographProvider>
@@ -1936,15 +2344,46 @@ export default function App() {
               />
             )}
 
-            {/* Title overlay */}
-            <div className="app-title">
-              {loaded?.meta?.title ?? 'Fuzz Archives'}
-            </div>
+
+            {/* Mobile community selector */}
+            {isMobile && loaded?.hasCluster && loaded.clusterGroups.size > 0 && (
+              <div style={{
+                position: 'absolute',
+                top: 40,
+                left: 8,
+                right: 8,
+                zIndex: 20,
+              }}>
+                <select
+                  value={selectedCluster ?? ''}
+                  onChange={e => setSelectedCluster(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    background: 'rgba(30,30,30,0.92)',
+                    color: '#fff',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    borderRadius: 8,
+                    fontSize: 14,
+                    fontFamily: 'system-ui',
+                    appearance: 'auto',
+                  }}
+                >
+                  {[...loaded.clusterGroups.entries()].map(([value, group]) => (
+                    <option key={value} value={value}>
+                      {getDisplayName(value)} ({group.count} nodes)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Credit overlay */}
             <div className="app-credit">
               Powered by Traverse &middot; Visualized with Cosmograph
             </div>
+
+            <div className="app-build">v0.8.52</div>
 
             {hasTimeline && (
               <div
@@ -1952,10 +2391,11 @@ export default function App() {
                   position: 'absolute',
                   left: 0,
                   right: 0,
-                  bottom: 0,
+                  bottom: 60,
                   padding: '8px 12px',
                   background: 'rgba(20,20,20,0.85)',
-                  borderTop: '1px solid rgba(255,255,255,0.12)'
+                  borderTop: '1px solid rgba(255,255,255,0.12)',
+                  zIndex: 11,
                 }}
               >
                 <CosmographTimeline
@@ -1965,56 +2405,36 @@ export default function App() {
                 />
               </div>
             )}
-            {!hasTimeline && (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: 56,
-                  bottom: 12,
-                  padding: '4px 8px',
-                  background: 'rgba(30,30,30,0.85)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  borderRadius: 6,
-                  fontFamily: 'system-ui',
-                  fontSize: 12,
-                  color: '#888'
-                }}
-              >
-                Timeline: disabled (no time fields detected)
-              </div>
-            )}
 
-            {/* Left toolbar */}
-            <div className={`toolbar ${toolbarOpen ? '' : 'toolbar-collapsed'}`}>
-              {!toolbarOpen && (
-                <button className="toolbar-expand-btn" onClick={() => setToolbarOpen(true)} title="Expand toolbar">&#9776;</button>
+            {/* Floating dock toolbar */}
+            <div className="toolbar">
+              {showClusteringTool && (
+                <button className={`toolbar-btn ${openTools.has('clustering') ? 'active' : ''}`}
+                        onClick={() => toggleTool('clustering')} title="Clustering">&#8862;</button>
               )}
-              {toolbarOpen && (
-                <>
-                  <button className="toolbar-collapse-btn" onClick={() => setToolbarOpen(false)} title="Collapse toolbar">&#9776;</button>
-                  <button className={`toolbar-btn ${openTools.has('clustering') ? 'active' : ''}`}
-                          onClick={() => toggleTool('clustering')} title="Clustering">&#8862;</button>
-                  <button className={`toolbar-btn ${openTools.has('communities') ? 'active' : ''}`}
-                          onClick={() => toggleTool('communities')} title="Communities">&#9673;</button>
-                  <button className={`toolbar-btn ${openTools.has('edges') ? 'active' : ''}`}
-                          onClick={() => toggleTool('edges')} title="Edge Analysis">&#10231;</button>
-                  <button className={`toolbar-btn ${openTools.has('detail') ? 'active' : ''}`}
-                          onClick={() => toggleTool('detail')} title="Detail">&#9776;</button>
-                  <button className={`toolbar-btn ${openTools.has('corrections') ? 'active' : ''}`}
-                          onClick={() => toggleTool('corrections')} title="Corrections">&#9998;</button>
-                  <button className={`toolbar-btn ${openTools.has('search') ? 'active' : ''}`}
-                          onClick={() => toggleTool('search')} title="Search">&#8981;</button>
-                  <button className={`toolbar-btn ${openTools.has('selection') ? 'active' : ''}`}
-                          onClick={() => toggleTool('selection')} title="Selection">&#11034;</button>
-                  <button className={`toolbar-btn ${openTools.has('paths') ? 'active' : ''}`}
-                          onClick={() => toggleTool('paths')} title="Neighborhood Paths">&#10548;</button>
-                  <button className={`toolbar-btn ${openTools.has('overlap') ? 'active' : ''}`}
-                          onClick={() => toggleTool('overlap')} title="My Listening">&#9835;</button>
-                  <button className={`toolbar-btn ${openTools.has('customize') ? 'active' : ''}`}
-                          style={{ marginTop: 'auto' }}
-                          onClick={() => toggleTool('customize')} title="Customize">&#9881;</button>
-                </>
+              <button className={`toolbar-btn ${openTools.has('communities') ? 'active' : ''}`}
+                      onClick={() => toggleTool('communities')} title="Communities">&#9673;</button>
+              {showEdgeTool && (
+                <button className={`toolbar-btn ${openTools.has('edges') ? 'active' : ''}`}
+                        onClick={() => toggleTool('edges')} title="Edge Analysis">&#10231;</button>
               )}
+              <button className={`toolbar-btn ${openTools.has('detail') ? 'active' : ''}`}
+                      onClick={() => toggleTool('detail')} title="Detail">&#9776;</button>
+              <button className={`toolbar-btn ${openTools.has('corrections') ? 'active' : ''}`}
+                      onClick={() => toggleTool('corrections')} title="Corrections">&#9998;</button>
+              <button className={`toolbar-btn ${openTools.has('search') ? 'active' : ''}`}
+                      onClick={() => toggleTool('search')} title="Search">&#8981;</button>
+              <button className={`toolbar-btn ${openTools.has('selection') ? 'active' : ''}`}
+                      onClick={() => toggleTool('selection')} title="Selection">&#11034;</button>
+              <button className={`toolbar-btn ${openTools.has('paths') ? 'active' : ''}`}
+                      onClick={() => toggleTool('paths')} title="Paths">&#10548;</button>
+              <button className={`toolbar-btn ${openTools.has('genre-search') ? 'active' : ''}`}
+                      onClick={() => toggleTool('genre-search')} title="Genre Search">&#9830;</button>
+              <button className={`toolbar-btn ${openTools.has('overlap') ? 'active' : ''}`}
+                      onClick={() => toggleTool('overlap')} title="My Listening">&#9835;</button>
+              <div className="toolbar-separator" />
+              <button className={`toolbar-btn ${openTools.has('customize') ? 'active' : ''}`}
+                      onClick={() => toggleTool('customize')} title="Settings">&#9881;</button>
             </div>
 
             {/* Clustering algorithm panel */}
@@ -2087,7 +2507,7 @@ export default function App() {
                   <button className="genre-detail-close" onClick={() => toggleTool('communities')}>&times;</button>
                 </div>
                 <div className="community-panel-body">
-                  {focusedCluster != null && (
+                  {focusedCluster != null && !isMobile && (
                     <button
                       className="community-clear-btn"
                       onClick={handleRestoreFullGraph}
@@ -2095,7 +2515,7 @@ export default function App() {
                       Back to full graph
                     </button>
                   )}
-                  {selectedCluster != null && (
+                  {selectedCluster != null && !isMobile && (
                     <button
                       className="community-clear-btn"
                       onClick={() => setSelectedCluster(null)}
@@ -2367,48 +2787,101 @@ export default function App() {
                   <button className="genre-detail-close" onClick={() => toggleTool('paths')}>&times;</button>
                 </div>
                 <div className="paths-panel-body">
-                  <label>
-                    Community A
-                    <select
-                      value={pathCommunityA ?? ''}
-                      onChange={e => { setPathCommunityA(e.target.value || null); setPathError(null); }}
-                    >
-                      <option value="">Select...</option>
-                      {[...loaded.clusterGroups.entries()].map(([key, group]) => (
-                        <option key={key} value={key} disabled={key === pathCommunityB}>
-                          {communityNames.get(key) || `Community ${key}`} ({group.indices.length})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {/* Mode tabs */}
+                  <div className="overlap-tabs" style={{ marginBottom: 6 }}>
+                    <button
+                      className={`overlap-tab ${pathMode === 'node' ? 'active' : ''}`}
+                      onClick={() => { setPathMode('node'); setPathError(null); }}
+                    >Node</button>
+                    <button
+                      className={`overlap-tab ${pathMode === 'community' ? 'active' : ''}`}
+                      onClick={() => { setPathMode('community'); setPathError(null); }}
+                    >Community</button>
+                  </div>
 
-                  <label>
-                    Community B
-                    <select
-                      value={pathCommunityB ?? ''}
-                      onChange={e => { setPathCommunityB(e.target.value || null); setPathError(null); }}
-                    >
-                      <option value="">Select...</option>
-                      {[...loaded.clusterGroups.entries()].map(([key, group]) => (
-                        <option key={key} value={key} disabled={key === pathCommunityA}>
-                          {communityNames.get(key) || `Community ${key}`} ({group.indices.length})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="paths-restrict-toggle">
-                    <input
-                      type="checkbox"
-                      checked={pathRestrict}
-                      onChange={e => setPathRestrict(e.target.checked)}
-                    />
-                    Restrict to selected communities only
-                  </label>
+                  {pathMode === 'node' ? (
+                    <>
+                      <label>
+                        From
+                        <input
+                          type="text"
+                          className="search-input"
+                          placeholder="Node name..."
+                          value={pathNodeA}
+                          onChange={e => { setPathNodeA(e.target.value); setPathError(null); }}
+                          list="path-node-a-suggestions"
+                        />
+                        <datalist id="path-node-a-suggestions">
+                          {pathNodeA.trim().length >= 2 && loaded?.raw.points
+                            .filter((p: any) => String(p.label ?? '').toLowerCase().includes(pathNodeA.trim().toLowerCase()))
+                            .slice(0, 15)
+                            .map((p: any) => <option key={p.id} value={p.label} />)}
+                        </datalist>
+                      </label>
+                      <label>
+                        To
+                        <input
+                          type="text"
+                          className="search-input"
+                          placeholder="Node name..."
+                          value={pathNodeB}
+                          onChange={e => { setPathNodeB(e.target.value); setPathError(null); }}
+                          list="path-node-b-suggestions"
+                        />
+                        <datalist id="path-node-b-suggestions">
+                          {pathNodeB.trim().length >= 2 && loaded?.raw.points
+                            .filter((p: any) => String(p.label ?? '').toLowerCase().includes(pathNodeB.trim().toLowerCase()))
+                            .slice(0, 15)
+                            .map((p: any) => <option key={p.id} value={p.label} />)}
+                        </datalist>
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <label>
+                        Community A
+                        <select
+                          value={pathCommunityA ?? ''}
+                          onChange={e => { setPathCommunityA(e.target.value || null); setPathError(null); }}
+                        >
+                          <option value="">Select...</option>
+                          {[...loaded.clusterGroups.entries()].map(([key, group]) => (
+                            <option key={key} value={key} disabled={key === pathCommunityB}>
+                              {communityNames.get(key) || `Community ${key}`} ({group.indices.length})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Community B
+                        <select
+                          value={pathCommunityB ?? ''}
+                          onChange={e => { setPathCommunityB(e.target.value || null); setPathError(null); }}
+                        >
+                          <option value="">Select...</option>
+                          {[...loaded.clusterGroups.entries()].map(([key, group]) => (
+                            <option key={key} value={key} disabled={key === pathCommunityA}>
+                              {communityNames.get(key) || `Community ${key}`} ({group.indices.length})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="paths-restrict-toggle">
+                        <input
+                          type="checkbox"
+                          checked={pathRestrict}
+                          onChange={e => setPathRestrict(e.target.checked)}
+                        />
+                        Restrict to selected communities only
+                      </label>
+                    </>
+                  )}
 
                   <button
                     className="cluster-algo-apply-btn"
-                    disabled={pathLoading || !pathCommunityA || !pathCommunityB || pathCommunityA === pathCommunityB}
+                    disabled={pathLoading || (pathMode === 'node'
+                      ? !pathNodeA.trim() || !pathNodeB.trim()
+                      : !pathCommunityA || !pathCommunityB || pathCommunityA === pathCommunityB)}
                     onClick={handleFindPaths}
                   >
                     {pathLoading ? 'Finding...' : 'Find Paths'}
@@ -3113,6 +3586,118 @@ export default function App() {
             </div>
             )}
 
+            {/* Genre search panel */}
+            {openTools.has('genre-search') && (
+            <div
+              className="tool-panel genre-search-panel draggable-panel"
+              style={{ ...genreSearchDrag.dragStyle, ...(genreSearchResize.size.h != null ? { height: genreSearchResize.size.h } : {}), ...(genreSearchResize.size.w != null ? { width: genreSearchResize.size.w } : {}) }}
+            >
+              <div
+                className="drag-handle search-panel-toggle"
+                onMouseDown={genreSearchDrag.onDragStart}
+              >
+                Genre Search
+                <button className="genre-detail-close" onClick={() => toggleTool('genre-search')}>&times;</button>
+              </div>
+              <div className="search-panel-body">
+                <input
+                  type="text"
+                  className="search-input"
+                  placeholder="Search genres/styles... (comma for OR)"
+                  value={genreSearchQuery}
+                  onChange={e => setGenreSearchQuery(e.target.value)}
+                  list="genre-search-suggestions"
+                  autoFocus
+                />
+                <datalist id="genre-search-suggestions">
+                  {allTags
+                    .filter(t => genreSearchQuery.trim() && t.includes(genreSearchQuery.trim().toLowerCase().split(',').pop()?.trim() ?? ''))
+                    .slice(0, 20)
+                    .map(t => <option key={t} value={t} />)}
+                </datalist>
+
+                {genreSearchQuery.trim() && (
+                  <div className="search-results-info">
+                    {genreSearchMatches
+                      ? `${genreSearchMatches.size} node${genreSearchMatches.size !== 1 ? 's' : ''} match`
+                      : 'No matches'}
+                    {loaded && genreSearchMatches && (
+                      <span style={{ opacity: 0.6 }}>
+                        {' '}({((genreSearchMatches.size / loaded.raw.points.length) * 100).toFixed(1)}%)
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {genreSearchMatches && genreSearchMatches.size > 0 && (
+                  <div className="overlap-controls">
+                    <button
+                      className={`overlap-mode-btn ${genreSearchHighlight ? 'active' : ''}`}
+                      onClick={() => setGenreSearchHighlight(h => !h)}
+                      title="Highlight matched nodes, dim the rest"
+                    >Highlight</button>
+                    <button
+                      className={`overlap-mode-btn ${genreSearchHeatmap ? 'active' : ''}`}
+                      onClick={() => {
+                        setGenreSearchHeatmap(h => !h);
+                        if (!genreSearchHighlight) setGenreSearchHighlight(true);
+                      }}
+                      title="Color by number of matching tags (plasma)"
+                    >Heatmap</button>
+                    <button
+                      className="overlap-clear-btn"
+                      onClick={() => {
+                        setGenreSearchQuery('');
+                        setGenreSearchHighlight(false);
+                        setGenreSearchHeatmap(false);
+                      }}
+                    >Clear</button>
+                  </div>
+                )}
+
+                {genreSearchSorted.length > 0 && (
+                  <ul className="search-results-list">
+                    {genreSearchSorted
+                      .slice(0, 100)
+                      .map(({ point: p, pct, matchCount, totalCount }) => (
+                        <li
+                          key={p.id}
+                          className="search-result-row"
+                          onClick={() => {
+                            const inst = cosmoRef.current;
+                            if (inst && loaded) {
+                              inst.getPointIndicesByIds([String(p.id)]).then((indices: number[] | undefined) => {
+                                if (indices && indices.length > 0) {
+                                  inst.selectPoints(indices);
+                                  inst.zoomToPoint(indices[0], 500, 1.5);
+                                }
+                              });
+                            }
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                            <span className="search-result-label">{p.label || p.id}</span>
+                            <span style={{ fontSize: '0.75em', opacity: 0.9, whiteSpace: 'nowrap', color: pct >= 0.5 ? '#a6e3a1' : pct >= 0.2 ? '#f9e2af' : '#f38ba8' }}>
+                              {(pct * 100).toFixed(0)}%
+                              <span style={{ opacity: 0.5 }}> ({matchCount}/{totalCount})</span>
+                            </span>
+                          </div>
+                          {p.genres && <span className="search-result-artist" style={{ fontSize: '0.75em', opacity: 0.5 }}>{p.genres}</span>}
+                        </li>
+                      ))}
+                    {genreSearchSorted.length > 100 && (
+                      <li className="search-result-row" style={{ opacity: 0.5, pointerEvents: 'none' }}>
+                        …and {genreSearchSorted.length - 100} more
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </div>
+              <div className="panel-resize-handle" onMouseDown={genreSearchResize.onVStart} />
+              <div className="panel-resize-handle-h" onMouseDown={genreSearchResize.onHStart} />
+            </div>
+            )}
+
             {/* User listening overlap panel */}
             {openTools.has('overlap') && (
             <div
@@ -3255,19 +3840,17 @@ export default function App() {
                     {overlapMatches.size > 0 ? (
                       <>
                         <div className="overlap-controls">
-                          <div className="overlap-mode-toggle">
-                            <button
-                              className={`overlap-mode-btn ${overlapMode === 'dim' ? 'active' : ''}`}
-                              onClick={() => setOverlapMode('dim')}
-                            >Dim</button>
-                            <button
-                              className={`overlap-mode-btn ${overlapMode === 'hide' ? 'active' : ''}`}
-                              onClick={() => setOverlapMode('hide')}
-                            >Hide</button>
-                          </div>
                           <button
-                            className={`overlap-mode-btn ${overlapColorize ? 'active' : ''}`}
-                            onClick={() => setOverlapColorize(c => !c)}
+                            className={`overlap-mode-btn ${overlapHighlight ? 'active' : ''}`}
+                            onClick={() => setOverlapHighlight(h => !h)}
+                            title="Highlight matched nodes, dim the rest"
+                          >Highlight</button>
+                          <button
+                            className={`overlap-mode-btn ${overlapHeatmap ? 'active' : ''}`}
+                            onClick={() => {
+                              setOverlapHeatmap(h => !h);
+                              if (!overlapHighlight) setOverlapHighlight(true);
+                            }}
                             title="Color nodes by listen intensity (plasma)"
                           >Heatmap</button>
                           <button
@@ -3276,7 +3859,8 @@ export default function App() {
                               setOverlapMatches(null);
                               setOverlapSummary(null);
                               setOverlapError(null);
-                              setOverlapColorize(false);
+                              setOverlapHighlight(false);
+                              setOverlapHeatmap(false);
                               // Remove injected first_seen_ts
                               if (loaded) {
                                 for (const pt of loaded.raw.points) {
@@ -3286,24 +3870,6 @@ export default function App() {
                             }}
                           >Clear</button>
                         </div>
-
-                        {overlapColorize && (
-                          <div className="overlap-opacity-control">
-                            <label className="overlap-opacity-label">
-                              Unmatched opacity
-                              <span className="overlap-opacity-value">{overlapOpacity.toFixed(2)}</span>
-                            </label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.025"
-                              value={overlapOpacity}
-                              onChange={e => setOverlapOpacity(parseFloat(e.target.value))}
-                              className="overlap-opacity-slider"
-                            />
-                          </div>
-                        )}
 
                         <ul className="overlap-match-list">
                           {Array.from(overlapMatches.values())
@@ -3473,6 +4039,38 @@ export default function App() {
                     />
                   </label>
                 </div>
+
+                <label>
+                  Panel Glass ({Math.round(panelOpacity * 100)}%)
+                  <input
+                    type="range"
+                    min={0.15}
+                    max={1.0}
+                    step={0.05}
+                    value={panelOpacity}
+                    onChange={e => setPanelOpacity(Number(e.target.value))}
+                  />
+                </label>
+
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', margin: '8px 0 4px', paddingTop: 8 }}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>Dock Tools</div>
+                  <label style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={showClusteringTool}
+                      onChange={e => setShowClusteringTool(e.currentTarget.checked)}
+                    />
+                    Clustering
+                  </label>
+                  <label style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={showEdgeTool}
+                      onChange={e => setShowEdgeTool(e.currentTarget.checked)}
+                    />
+                    Edge Analysis
+                  </label>
+                </div>
               </div>
               <div className="panel-resize-handle" onMouseDown={customizeResize.onVStart} />
               <div className="panel-resize-handle-h" onMouseDown={customizeResize.onHStart} />
@@ -3528,9 +4126,37 @@ export default function App() {
             )}
           </CosmographProvider>
         ) : (
-          <div style={{ padding: 16, fontFamily: 'system-ui' }}>Loading…</div>
+          <div style={{ position: 'absolute', top: 12, left: 12, padding: '6px 12px', background: 'rgba(30,30,30,0.88)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, fontFamily: 'system-ui', fontSize: 12, color: '#ccc' }}>Loading…</div>
         )}
       </div>
+
+      {/* Top toolbar - graph selector (always visible) */}
+      {availableGraphs.length > 0 && (
+        <div className="top-toolbar">
+          <select
+            className="graph-select"
+            value={selectedGraph}
+            onChange={e => setSelectedGraph(e.target.value)}
+          >
+            {availableGraphs.map(g => (
+              <option key={g.filename} value={g.filename}>
+                {g.label} ({g.sizeMB} MB)
+              </option>
+            ))}
+          </select>
+          <button
+            className="graph-load-btn"
+            onClick={handleLoadGraph}
+            disabled={graphLoading}
+          >
+            {graphLoading ? 'Loading…' : 'Load'}
+          </button>
+          <label className="auto-cluster-toggle" title="Auto-run Louvain clustering on load">
+            <input type="checkbox" checked={autoCluster} onChange={e => setAutoCluster(e.target.checked)} />
+            Auto-cluster
+          </label>
+        </div>
+      )}
     </div>
   );
 }
