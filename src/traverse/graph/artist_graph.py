@@ -124,7 +124,7 @@ def build_artist_graph(
     artist_genres: Dict[str, Set[str]] = {}
     artist_styles: Dict[str, Set[str]] = {}
     artist_all_tags: Dict[str, Set[str]] = {}
-    artist_tag_counts: Dict[str, Counter] = {}
+    artist_tag_counts: Dict[str, Counter[str]] = {}
     # Per-type edge-tag sets for require_all_tag_types filtering
     artist_tags_by_type: Dict[str, Dict[str, Set[str]]] = (
         {tt: {} for tt in tag_types} if _require_all else {}
