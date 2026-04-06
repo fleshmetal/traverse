@@ -1134,7 +1134,9 @@ export default function App() {
 
   // Album click handler — fetches tracks by artist from server
   const handleAlbumClick = useCallback(async (point: any) => {
-    console.log('[album-detail] handleAlbumClick called:', point.label, point.artist);
+    const l = loadedRef.current;
+    const extLinks = l?.externalLinksMap?.get(String(point.id));
+    console.log('[album-detail] handleAlbumClick:', point.label, point.artist, 'links:', extLinks?.length ?? 0);
     setSelectedAlbum({
       id: String(point.id),
       label: String(point.label),
@@ -1142,7 +1144,7 @@ export default function App() {
       genres: String(point.genres ?? ''),
       styles: String(point.styles ?? ''),
       releaseYear: point.release_year != null ? Number(point.release_year) : undefined,
-      externalLinks: Array.isArray(point.external_links) ? point.external_links : undefined,
+      externalLinks: extLinks,
     });
     setSelectedGenre(null);
     setSelectedEdge(null);
@@ -1464,7 +1466,9 @@ export default function App() {
   // Route click to album or genre handler based on point data
   const routeNodeClick = useCallback((point: any) => {
     if (!point) return;
-    const links = Array.isArray(point.external_links) ? point.external_links : null;
+    // Look up external links from the preserved map (survives DuckDB processing)
+    const l = loadedRef.current;
+    const links = l?.externalLinksMap?.get(String(point.id)) ?? null;
     setSelectedNodeLinks(links);
     if (point.artist != null && point.artist !== '') {
       // Album node — has an explicit artist field
@@ -1518,39 +1522,65 @@ export default function App() {
     if (!cfg) return cfg;
 
     // Always apply click callbacks (link colors are pre-computed as _color)
+    // Explicitly clear linkColorByFn/linkWidthByFn so deselection reverts to plasma
     const base = {
       ...cfg,
       onClick: onGraphClick,
       onLabelClick: onGraphLabelClick,
+      linkColorByFn: undefined,
+      linkWidthByFn: undefined,
     };
 
-    // Path selected → highlight path nodes, dim everything else
+    // Path selected → highlight path nodes + edges, dim everything else
     if (selectedPath && loaded) {
       const pathSet = new Set(selectedPath.nodes);
+      // Build set of link indices on the path
+      const pathLinkIndices = new Set<number>();
+      for (let i = 0; i < selectedPath.nodes.length - 1; i++) {
+        const a = selectedPath.nodes[i], b = selectedPath.nodes[i + 1];
+        const key = a < b ? `${a}→${b}` : `${b}→${a}`;
+        const idx = loaded.edgeToIndex.get(key);
+        if (idx != null) pathLinkIndices.add(idx);
+      }
       return {
         ...base,
         pointGreyoutOpacity: 0.1,
-        linkGreyoutOpacity: 0.08,
+        linkGreyoutOpacity: 0.03,
         selectedPointRingColor: '#ffffff',
         showLabels: true,
         showDynamicLabels: true,
         showTopLabels: true,
+        linkColorBy: '_color',
+        linkColorStrategy: 'direct',
+        linkColorByFn: (_value: any, index?: number) =>
+          index != null && pathLinkIndices.has(index) ? [255, 255, 255, 1.0] as [number, number, number, number] : undefined,
+        linkWidthByFn: (_value: any, index?: number) =>
+          index != null && pathLinkIndices.has(index) ? 3 : undefined,
         pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
           pointId != null && pathSet.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
       };
     }
 
-    // Edge selected → highlight the two endpoints, dim everything else
+    // Edge selected → highlight the two endpoints + the edge, dim everything else
     if (selectedEdge && loaded) {
       const edgeSet = new Set([selectedEdge.source, selectedEdge.target]);
+      const a = selectedEdge.source, b = selectedEdge.target;
+      const key = a < b ? `${a}→${b}` : `${b}→${a}`;
+      const selIdx = loaded.edgeToIndex.get(key);
       return {
         ...base,
         pointGreyoutOpacity: 0.1,
-        linkGreyoutOpacity: 0.08,
+        linkGreyoutOpacity: 0.03,
         selectedPointRingColor: '#ffffff',
         showLabels: true,
         showDynamicLabels: true,
         showTopLabels: true,
+        linkColorBy: '_color',
+        linkColorStrategy: 'direct',
+        linkColorByFn: (_value: any, index?: number) =>
+          index != null && index === selIdx ? [255, 255, 255, 1.0] as [number, number, number, number] : undefined,
+        linkWidthByFn: (_value: any, index?: number) =>
+          index != null && index === selIdx ? 3 : undefined,
         pointLabelClassName: (_text: string, _idx: number, pointId?: string) =>
           pointId != null && edgeSet.has(String(pointId)) ? 'genre-label' : 'genre-label-hidden',
       };
@@ -2935,7 +2965,7 @@ export default function App() {
             {openTools.has('detail') && (
             <div className="tool-panel detail-tool-panel genre-detail-panel draggable-panel" style={{ ...genreDrag.dragStyle, ...(genreResize.size.h != null ? { height: genreResize.size.h } : {}), ...(genreResize.size.w != null ? { width: genreResize.size.w } : {}) }}>
               <div className="genre-detail-header drag-handle" onMouseDown={genreDrag.onDragStart}>
-                <span className="genre-detail-title">
+                <span className="genre-detail-title" onMouseDown={e => e.stopPropagation()}>
                   {selectedEdge
                     ? `Edge: ${loaded?.raw.points.find((p: any) => p.id === selectedEdge.source)?.label ?? selectedEdge.source} — ${loaded?.raw.points.find((p: any) => p.id === selectedEdge.target)?.label ?? selectedEdge.target}`
                     : selectedAlbum ? selectedAlbum.label
