@@ -48,4 +48,27 @@ def build_external_links(point: Dict[str, Any]) -> List[Dict[str, str]]:
 
     links.append({"platform": "discogs", "url": url, "label": "Discogs"})
 
+    # --- YouTube ---
+    if artist:
+        yt_q = quote_plus(f"{artist} {label}")
+    else:
+        yt_q = quote_plus(label)
+    links.append(
+        {
+            "platform": "youtube",
+            "url": f"https://www.youtube.com/results?search_query={yt_q}",
+            "label": "YouTube",
+        }
+    )
+
+    # --- Bandcamp ---
+    bc_q = quote_plus(label)
+    links.append(
+        {
+            "platform": "bandcamp",
+            "url": f"https://bandcamp.com/search?q={bc_q}",
+            "label": "Bandcamp",
+        }
+    )
+
     return links

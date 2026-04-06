@@ -14,6 +14,8 @@ export type LoadedInputs = {
   edgeToIndex: Map<string, number>;
   maxWeight: number;
   meta: Record<string, any> | undefined;
+  /** Map from point id → parsed external_links array, preserved before DuckDB processing */
+  externalLinksMap: Map<string, { platform: string; url: string; label: string }[]>;
 };
 
 function toEpochMs(v: unknown): number | null {
@@ -242,6 +244,7 @@ export async function filterToCommunity(
     edgeToIndex,
     maxWeight,
     meta,
+    externalLinksMap: full.externalLinksMap,
   };
 }
 
@@ -283,6 +286,17 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
   const points = Array.isArray(json.points) ? [...json.points] : [];
   const links  = Array.isArray(json.links)  ? [...json.links]  : [];
   const meta   = json.meta ?? undefined;
+
+  // Preserve external_links BEFORE DuckDB processing (which may strip extra fields)
+  const externalLinksMap = new Map<string, { platform: string; url: string; label: string }[]>();
+  for (const p of points) {
+    if (p.id != null && p.external_links != null) {
+      let el = p.external_links;
+      if (typeof el === 'string') { try { el = JSON.parse(el); } catch { el = null; } }
+      if (Array.isArray(el) && el.length > 0) externalLinksMap.set(String(p.id), el);
+    }
+  }
+  console.debug('[DBG] externalLinksMap size:', externalLinksMap.size);
 
   console.debug('[DBG] Raw sizes', { points: points.length, links: links.length });
 
@@ -396,5 +410,6 @@ export async function loadAndPrepare(url: string): Promise<LoadedInputs> {
     edgeToIndex,
     maxWeight,
     meta,
+    externalLinksMap,
   };
 }
