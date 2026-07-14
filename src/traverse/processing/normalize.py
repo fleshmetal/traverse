@@ -15,6 +15,8 @@ SKIP_ARTISTS = frozenset(
         "unknown",
         "unknown artist",
         "unknown artists",
+        "no artist",
+        "dj nonstick cookware",
     }
 )
 

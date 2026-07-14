@@ -13,6 +13,7 @@ Uses an inverted-index approach to avoid O(n^2) all-pairs comparison:
 
 from __future__ import annotations
 
+import math
 import random
 import sys
 from collections import Counter, defaultdict
@@ -51,6 +52,8 @@ def build_artist_graph(
     sample_high_degree: bool = True,
     require_tags: Optional[Dict[str, List[str]]] = None,
     require_all_tag_types: bool = False,
+    skip_artists: Optional[Set[str]] = None,
+    tfidf_top_k: int = 0,
     chunksize: int = 200_000,
     progress: bool = True,
 ) -> Tuple[CooccurrenceGraph, pd.DataFrame]:
@@ -117,6 +120,7 @@ def build_artist_graph(
     use_styles = "styles" in tag_types
     # Only activate AND logic when there are multiple tag types
     _require_all = require_all_tag_types and len(tag_types) > 1
+    _skip_lower: Set[str] = {s.lower() for s in skip_artists} if skip_artists else set()
 
     # ------------------------------------------------------------------
     # Pass 1a: Stream CSV, collect unique artists + merged tag sets
@@ -131,12 +135,21 @@ def build_artist_graph(
     )
     total_rows = 0
 
+    # Peek at the header to determine column names and limit what pandas loads
+    _peek = pd.read_csv(records_csv, nrows=0, dtype="string")
+    _colmap = {c.lower(): c for c in _peek.columns}
+    gcol = _detect_col(_colmap, "genres", "genre")
+    scol = _detect_col(_colmap, "styles", "style")
+    acol = _detect_col(_colmap, "artist_name", "artist", "artists")
+    _usecols = [c for c in [acol, gcol, scol] if c is not None]
+
     raw_reader = pd.read_csv(
         records_csv,
         chunksize=chunksize,
         dtype="string",
         keep_default_na=True,
         na_filter=True,
+        usecols=_usecols,
     )
     reader: Any = raw_reader
 
@@ -150,16 +163,11 @@ def build_artist_graph(
 
     for chunk in reader:
         total_rows += len(chunk)
-        colmap = {c.lower(): c for c in chunk.columns}
-
-        gcol = _detect_col(colmap, "genres", "genre")
-        scol = _detect_col(colmap, "styles", "style")
-        acol = _detect_col(colmap, "artist", "artists")
 
         for idx in range(len(chunk)):
             row = chunk.iloc[idx]
             aval = str(row[acol]).strip() if acol and pd.notna(row[acol]) else ""
-            if not aval or is_skip_artist(aval):
+            if not aval or is_skip_artist(aval) or aval.lower() in _skip_lower:
                 continue
 
             gval = row[gcol] if gcol else ""
@@ -266,6 +274,42 @@ def build_artist_graph(
     # Integer mapping
     keys_sorted = sorted(artist_all_tags.keys())
     key_to_int: Dict[str, int] = {k: i for i, k in enumerate(keys_sorted)}
+
+    # ------------------------------------------------------------------
+    # Pass 1c: TF-IDF filtering (optional)
+    # Keeps only each artist's top-K most distinctive edge-building tags.
+    # IDF is computed over the filtered artist set only.
+    # artist_genres / artist_styles used for display are left intact.
+    # ------------------------------------------------------------------
+    artist_tfidf: Dict[str, Dict[str, float]] = {}
+    if tfidf_top_k > 0:
+        N_tfidf = len(artist_all_tags)
+        tag_doc_freq: Counter[str] = Counter()
+        for _tags in artist_all_tags.values():
+            tag_doc_freq.update(_tags)
+
+        idf: Dict[str, float] = {
+            tag: math.log(N_tfidf / freq)
+            for tag, freq in tag_doc_freq.items()
+        }
+
+        for artist, tags in artist_all_tags.items():
+            tc = artist_tag_counts.get(artist, Counter())
+            total = sum(tc.values()) or 1
+            scores: Dict[str, float] = {
+                tag: (tc.get(tag, 1) / total) * idf.get(tag, 0.0)
+                for tag in tags
+            }
+            artist_tfidf[artist] = scores
+            artist_all_tags[artist] = set(
+                sorted(scores, key=scores.__getitem__, reverse=True)[:tfidf_top_k]
+            )
+
+        print(
+            f"Pass 1c: TF-IDF top-{tfidf_top_k} — "
+            f"{len(tag_doc_freq):,} unique tags across {N_tfidf:,} artists",
+            file=sys.stderr,
+        )
 
     # Build int-keyed per-type tag sets for AND filtering
     _tags_by_type_int: Dict[str, Dict[int, Set[str]]] = {}
@@ -486,19 +530,33 @@ def build_artist_graph(
 
     graph = CooccurrenceGraph(points=points, links=links)
 
-    # Records DataFrame for downstream compatibility
-    records_rows = [
-        {
-            "artist_name": keys_sorted[nid],
+    # Records DataFrame — tags sorted by TF-IDF score when available, else raw count
+    records_rows = []
+    for nid in sorted(node_ints):
+        key = keys_sorted[nid]
+        tc = artist_tag_counts.get(key, Counter())
+        tfidf_scores = artist_tfidf.get(key, {})
+
+        def _fmt(tag: str, _tc: Counter = tc, _s: Dict[str, float] = tfidf_scores) -> str:
+            count = _tc.get(tag, 1)
+            score = _s.get(tag)
+            if score is not None:
+                return f"{pretty_label(tag)} ({count}, {score:.3f})"
+            return f"{pretty_label(tag)} ({count})"
+
+        def _sort_key(tag: str, _tc: Counter = tc, _s: Dict[str, float] = tfidf_scores) -> float:
+            score = _s.get(tag)
+            return -(score if score is not None else _tc.get(tag, 0))
+
+        records_rows.append({
+            "artist_name": key,
             "genres": " | ".join(
-                pretty_label(g) for g in sorted(artist_genres.get(keys_sorted[nid], set()))
+                _fmt(g) for g in sorted(artist_genres.get(key, set()), key=_sort_key)
             ),
             "styles": " | ".join(
-                pretty_label(s) for s in sorted(artist_styles.get(keys_sorted[nid], set()))
+                _fmt(s) for s in sorted(artist_styles.get(key, set()), key=_sort_key)
             ),
-        }
-        for nid in sorted(node_ints)
-    ]
+        })
     records_df = pd.DataFrame(records_rows)
 
     return graph, records_df
